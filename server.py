@@ -167,9 +167,25 @@ def _ocr_paddle_predict(engine, path: str) -> str:
         return "\n".join(lines)
 
 
+def _tesseract_cmd():
+    """Tesseract 실행파일 탐색: PATH → 표준 설치 위치 (winget/UB-Mannheim)"""
+    cands = [shutil.which("tesseract"),
+             r"C:\Program Files\Tesseract-OCR\tesseract.exe",
+             r"C:\Program Files (x86)\Tesseract-OCR\tesseract.exe"]
+    for p in cands:
+        if p and os.path.isfile(p):
+            return p
+    return None
+
+
 def _ocr_tesseract(path: str, lang: str) -> str:
     import pytesseract
     from PIL import Image, ImageOps
+    cmd = _tesseract_cmd()
+    if not cmd:
+        raise RuntimeError("Tesseract 실행파일을 찾을 수 없습니다 "
+                           "(설치: winget install --id UB-Mannheim.TesseractOCR)")
+    pytesseract.pytesseract.tesseract_cmd = cmd
     img = Image.open(path)
     img = ImageOps.exif_transpose(img).convert("L")      # 회전 보정 + 회색조
     w, h = img.size
@@ -181,13 +197,20 @@ def _ocr_tesseract(path: str, lang: str) -> str:
 
 
 def ocr_image(path: str, lang: str) -> str:
+    paddle_err = None
     if OCR_ENGINE == "paddle":
         try:
             return _ocr_paddle(path, lang).strip()
         except Exception as e:
-            print(f"[ocr] PaddleOCR 실패 → Tesseract 대체: "
-                  f"{type(e).__name__}: {e}")
-    return _ocr_tesseract(path, lang).strip()
+            paddle_err = f"{type(e).__name__}: {e}"
+            print(f"[ocr] PaddleOCR 실패 → Tesseract 대체: {paddle_err}")
+    try:
+        return _ocr_tesseract(path, lang).strip()
+    except Exception as e:
+        msg = f"Tesseract 실패: {e}"
+        if paddle_err:
+            msg += f" | Paddle 원인: {paddle_err}"
+        raise RuntimeError(msg)
 
 
 # ---------------------------------------------------------------- 번역
