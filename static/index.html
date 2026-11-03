@@ -170,8 +170,12 @@ function poll(id) {
           "<br><small>(번역은 온라인 API 사용 — 잠시 후 재시도 필요할 수 있음)</small>";
       $("ko").style.display = "block";
       if (j.text) $("ts").textContent = j.text;     // 최종 스냅샷 확정 반영
-      $("ms").textContent = "⏱ 처리 " + ((j.ms / 1000) || "?") + "초 · 목소리 " +
-        (LANG_NAME[$("lang").value] || $("lang").value) + " · " + (j.audio_ext === "wav" ? "PC 오프라인 음성(SAPI)" : "자연 음성(edge-tts)");
+      $("ms").textContent = "⏱ 처리 " + ((j.ms / 1000) || "?") + "초" +
+        " (인식 " + (((j.ocr_ms || 0) / 1000) || "?") + "s · 말하기 " +
+        (((j.tts_ms || 0) / 1000) || "?") + "s" +
+        (j.trans_ms ? " · 번역 " + (j.trans_ms / 1000) + "s" : "") + ")" +
+        " · 목소리 " + (LANG_NAME[$("lang").value] || $("lang").value) +
+        " · " + (j.audio_ext === "wav" ? "PC 오프라인 음성(SAPI)" : "자연 음성(edge-tts)");
       if ($("auto").checked) au.play().catch(() => {});
     } catch (e) { /* 네트워크 순간 끊김 — 다음 폴링에서 재시도 */ }
   }, 700);

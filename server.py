@@ -372,9 +372,11 @@ def _stage(msg: str):
 async def _bg_translate(job: dict, text: str, lang: str):
     """번역 백그라운드 실행 — 읽어주기(TTS)를 기다리게 하지 않기 위해 별도 태스크."""
     try:
+        t0 = time.time()
         tr, err = await asyncio.get_running_loop().run_in_executor(
             None, translate_text, text, lang)
         job["translation"], job["translation_error"] = tr, err
+        job["trans_ms"] = int((time.time() - t0) * 1000)
         if err:
             print(f"[translate] 실패: {err}")
     finally:
@@ -388,7 +390,9 @@ async def _run_job(jid: str, img_path: Path, lang: str, do_translate: bool):
     try:
         # 1) OCR
         job["status"] = "ocr"
+        t_ocr = time.time()
         text = await loop.run_in_executor(None, ocr_image, str(img_path), lang)
+        job["ocr_ms"] = int((time.time() - t_ocr) * 1000)
         job["text"] = text
         if not text:
             job["status"] = "error"
@@ -401,6 +405,7 @@ async def _run_job(jid: str, img_path: Path, lang: str, do_translate: bool):
 
         # 3) TTS — edge-tts → SAPI 대체
         job["status"] = "tts"
+        t_tts = time.time()
         spoken = _clean_for_tts(text)
         audio = UPLOADS / f"{jid}.mp3"
         if await tts_edge(spoken, VOICES.get(lang, VOICES["eng"]), str(audio)):
@@ -416,6 +421,7 @@ async def _run_job(jid: str, img_path: Path, lang: str, do_translate: bool):
 
         job["status"] = "done"
         job["ms"] = int((time.time() - t0) * 1000)
+        job["tts_ms"] = int((time.time() - t_tts) * 1000)
         if tr_task:
             await tr_task          # 음성은 이미 재생 중 — 번역 완료까지만 폴링 유지
     except Exception as exc:  # 절대 조용히 죽지 않게
@@ -438,7 +444,8 @@ async def process(image: UploadFile = File(...),
 
     job = {"id": jid, "status": "queued", "text": "", "translation": "",
            "translation_error": "", "translating": False, "audio": "",
-           "audio_ext": "", "error": "", "ms": 0, "image": img_path.name}
+           "audio_ext": "", "error": "", "ms": 0, "ocr_ms": 0, "tts_ms": 0,
+           "trans_ms": 0, "image": img_path.name}
     with _LOCK:
         JOBS[jid] = job
     task = asyncio.create_task(_run_job(jid, img_path, lang, translate == "true"))
@@ -484,7 +491,24 @@ async def index():
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 
 
+def _warmup_paddle():
+    """서버 시작 직후 OCR 엔진 예열 — GPU 최초 커널 로딩을 사용자 요청과 분리."""
+    if OCR_ENGINE != "paddle":
+        return
+    try:
+        from PIL import Image as _Img
+        img = UPLOADS / "_warmup.png"
+        _Img.new("RGB", (480, 320), "white").save(img)
+        t = time.time()
+        _ocr_paddle(str(img), "eng")
+        img.unlink(missing_ok=True)
+        print(f"[warmup] OCR 엔진 예열 완료 ({time.time() - t:.1f}초) — 첫 요청부터 빠릅니다")
+    except Exception as e:
+        print(f"[warmup] 건너뜀: {type(e).__name__}: {e}")
+
+
 if __name__ == "__main__":
     import uvicorn
+    threading.Thread(target=_warmup_paddle, daemon=True).start()
     print("snap2read 서버 시작 → http://0.0.0.0:8000  (폰에서는 PC의 IP 사용)")
     uvicorn.run(app, host="0.0.0.0", port=8000)
