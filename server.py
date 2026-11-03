@@ -120,6 +120,9 @@ def _ocr_paddle(path: str, lang: str) -> str:
                     use_doc_orientation_classify=False,
                     use_doc_unwarping=False,
                     use_textline_orientation=False,
+                    # CPU oneDNN은 PP-OCRv6 일부 연산 미지원
+                    # (ConvertPirAttribute2RuntimeAttribute 오류) → plain paddle 모드로 실행
+                    enable_mkldnn=False,
                 )
                 # 방향 판별 모델도 로컬에 있으면 그 위치를 지정 (초기화 시 다운로드 방지)
                 if PADDLE_MODEL_DIRS["textline"].is_dir():
@@ -133,7 +136,8 @@ def _ocr_paddle(path: str, lang: str) -> str:
                 print(f"[ocr] 로컬 v6 로드 실패 → 기본 경로로 대체: "
                       f"{type(e).__name__}: {e}")
         try:
-            eng = PaddleOCR(use_textline_orientation=True, lang=lang_code)
+            eng = PaddleOCR(use_textline_orientation=True, lang=lang_code,
+                            enable_mkldnn=False)
         except TypeError:
             eng = PaddleOCR(use_angle_cls=True, show_log=False, lang=lang_code)
         setattr(app.state, engine_name, eng)
