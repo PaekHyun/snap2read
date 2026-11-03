@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<title>snap2read — 찍으면 읽어줍니다</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; min-height: 100vh; padding: 16px 14px calc(24px + env(safe-area-inset-bottom));
+    background: linear-gradient(160deg, #0f172a, #1e293b 60%, #0b1120);
+    color: #e2e8f0; font-family: -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    max-width: 640px; margin-inline: auto;
+  }
+  h1 { font-size: 20px; margin: 4px 0 2px; letter-spacing: .3px; }
+  .sub { color: #94a3b8; font-size: 12.5px; margin-bottom: 14px; }
+  .card {
+    background: rgba(30,41,59,.75); border: 1px solid #334155; border-radius: 16px;
+    padding: 14px; margin-bottom: 14px; backdrop-filter: blur(6px);
+  }
+  label { font-size: 12px; color: #94a3b8; display: block; margin-bottom: 6px; }
+  select, button { font-size: 15px; font-family: inherit; }
+  select {
+    width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid #475569;
+    background: #0f172a; color: #e2e8f0;
+  }
+  .row { display: flex; gap: 10px; align-items: center; margin-top: 10px; flex-wrap: wrap; }
+  .chk { display: flex; align-items: center; gap: 7px; font-size: 14px; }
+  .big {
+    width: 100%; margin-top: 12px; padding: 15px; border: 0; border-radius: 14px;
+    background: linear-gradient(135deg, #2563eb, #7c3aed); color: #fff;
+    font-size: 16.5px; font-weight: 700; cursor: pointer;
+  }
+  .big:active { transform: scale(.985); }
+  .big[disabled] { opacity: .55; cursor: wait; }
+  #shot { display: none; }
+  .status { display: flex; align-items: center; gap: 10px; margin: 4px 0; font-size: 14.5px; }
+  .spin {
+    width: 16px; height: 16px; border-radius: 50%; flex: none;
+    border: 2.5px solid #475569; border-top-color: #38bdf8;
+    animation: r 1s linear infinite; display: none;
+  }
+  @keyframes r { to { transform: rotate(360deg); } }
+  .err { color: #fca5a5; font-size: 14px; white-space: pre-wrap; }
+  .ts { white-space: pre-wrap; line-height: 1.75; font-size: 15.5px; }
+  .ko { color: #a5b4fc; line-height: 1.75; font-size: 14.5px;
+        border-top: 1px dashed #334155; margin-top: 10px; padding-top: 10px; }
+  audio { width: 100%; margin-top: 10px; }
+  .dl {
+    display: inline-block; margin-top: 10px; padding: 10px 16px; border-radius: 10px;
+    background: #0ea5e9; color: #04283a; font-weight: 700; text-decoration: none;
+  }
+  .ms { color: #64748b; font-size: 12px; margin-top: 8px; }
+  .empty { color: #64748b; font-size: 13px; }
+</style>
+</head>
+<body>
+  <h1>📸 snap2read</h1>
+  <div class="sub">페이지를 찍으면 PC가 읽어줍니다 · 스트리밍 재생 · MP3 저장</div>
+
+  <div class="card">
+    <label for="lang">책의 언어</label>
+    <select id="lang">
+      <option value="eng" selected>영어</option>
+      <option value="kor">한국어</option>
+      <option value="jpn">일본어</option>
+      <option value="chi_sim">중국어(간체)</option>
+      <option value="rus">러시아어</option>
+      <option value="vie">베트남어</option>
+      <option value="spa">스페인어</option>
+      <option value="fra">프랑스어</option>
+      <option value="deu">독일어</option>
+    </select>
+    <div class="row">
+      <span class="chk"><input type="checkbox" id="tr" checked> 번역도 함께 보기</span>
+      <span class="chk"><input type="checkbox" id="auto" checked> 완료 시 자동 재생</span>
+    </div>
+    <button class="big" id="go">📷 사진 찍기 / 선택</button>
+    <input type="file" id="shot" accept="image/*" capture="environment">
+  </div>
+
+  <div class="card" id="out" style="display:none">
+    <div class="status"><span class="spin" id="spin"></span><span id="st">대기 중…</span></div>
+    <div class="err" id="err"></div>
+    <div class="ts" id="ts"></div>
+    <div class="ko" id="ko" style="display:none"></div>
+    <audio id="au" controls preload="none" style="display:none"></audio>
+    <a class="dl" id="dl" style="display:none" download>⬇ MP3/WAV 저장</a>
+    <div class="ms" id="ms"></div>
+  </div>
+
+<script>
+const $ = id => document.getElementById(id);
+const LANG_NAME = {eng:"영어",kor:"한국어",jpn:"일본어",chi_sim:"중국어",rus:"러시아어",vie:"베트남어",spa:"스페인어",fra:"프랑스어",deu:"독일어"};
+let polling = null;
+
+$("go").onclick = () => $("shot").click();
+
+$("shot").onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  $("out").style.display = "block";
+  $("err").textContent = ""; $("ts").textContent = ""; $("ko").style.display = "none";
+  $("au").style.display = "none"; $("dl").style.display = "none"; $("ms").textContent = "";
+  $("spin").style.display = "inline-block"; $("st").textContent = "사진 전송 중…";
+  $("go").disabled = true;
+  if (polling) clearInterval(polling);
+
+  try {
+    const fd = new FormData();
+    fd.append("image", f, "photo.jpg");
+    fd.append("lang", $("lang").value);
+    fd.append("translate", $("tr").checked ? "true" : "false");
+    const r = await fetch("/api/process", { method: "POST", body: fd });
+    if (!r.ok) throw new Error("업로드 실패 (" + r.status + ")");
+    const { id } = await r.json();
+    poll(id);
+  } catch (err) {
+    fail(err.message);
+  } finally {
+    e.target.value = "";            // 같은 사진 재선택 허용
+    $("go").disabled = false;
+  }
+};
+
+function poll(id) {
+  const STAGE = { queued:"대기 중…", ocr:"글자 인식 중…", translate:"번역 중…", tts:"목소리 만드는 중…" };
+  polling = setInterval(async () => {
+    try {
+      const j = await (await fetch("/api/status/" + id)).json();
+      if (j.status === "error") { clearInterval(polling); return fail(j.error || "처리 실패"); }
+      $("st").textContent = STAGE[j.status] || j.status;
+      if (j.text)    $("ts").textContent = j.text;
+      if (j.translation) { $("ko").textContent = j.translation; $("ko").style.display = "block"; }
+      if (j.status !== "done") return;
+      clearInterval(polling);
+      const au = $("au"), src = "/api/audio/" + id;
+      au.src = src; au.style.display = "block";
+      $("dl").href = src; $("dl").download = "snap2read." + (j.audio_ext || "mp3");
+      $("dl").style.display = "inline-block";
+      $("ms").textContent = "⏱ 처리 " + ((j.ms / 1000) || "?") + "초 · 목소리 " +
+        (LANG_NAME[$("lang").value] || $("lang").value) + " · " + (j.audio_ext === "wav" ? "PC 오프라인 음성(SAPI)" : "자연 음성(edge-tts)");
+      if ($("auto").checked) au.play().catch(() => {});
+    } catch (e) { /* 네트워크 순간 끊김 — 다음 폴링에서 재시도 */ }
+  }, 700);
+}
+
+function fail(msg) {
+  $("spin").style.display = "none"; $("st").textContent = "실패";
+  $("err").textContent = "⚠️ " + msg;
+}
+</script>
+</body>
+</html>

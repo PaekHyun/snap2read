@@ -1,0 +1,8 @@
+__pycache__/
+uploads/
+*.pyc
+*.mp3
+*.wav
+test_*.mp3
+ocr_test.png
+.DS_Store
