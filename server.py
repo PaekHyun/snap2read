@@ -259,6 +259,11 @@ _MEM_CODES = {"eng": "en-GB", "kor": "ko-KR", "jpn": "ja-JP",
               "chi_sim": "zh-CN", "rus": "ru-RU", "vie": "vi-VN",
               "spa": "es-ES", "fra": "fr-FR", "deu": "de-DE"}
 
+# 구글 제한(TooManyRequests) 밴은 약 30분 지속 — 밴 동안 구글을 건너뛰고
+# 바로 MyMemory를 써서 매 페이지마다 백오프 대기를 없앤다.
+_google_banned_until = 0.0
+_GOOGLE_COOLDOWN = 30 * 60
+
 
 def _translate_mymemory(text: str, lang: str) -> tuple[str, str]:
     """대체 엔진 MyMemory — 구글이 차단/제한 중일 때 사용 (450자 단위 분할)."""
@@ -280,7 +285,8 @@ def _translate_mymemory(text: str, lang: str) -> tuple[str, str]:
 
 
 def translate_text(text: str, lang: str) -> tuple[str, str]:
-    """(번역문, 오류메시지) — 구글 실패 시 MyMemory로 자동 대체."""
+    """(번역문, 오류메시지) — 구글 실패/밴 시 MyMemory로 자동 대체."""
+    global _google_banned_until
     try:
         tgt = _TRANS_TARGET.get(lang, "ko")
         if tgt == "ko" and lang not in _TRANS_SRC:
@@ -288,15 +294,21 @@ def translate_text(text: str, lang: str) -> tuple[str, str]:
         src = _TRANS_SRC.get(lang, "english")
         if src == tgt:
             return text, ""
-        try:
-            return _translate_google(text, src, tgt)
-        except Exception as e:
-            g_err = f"{type(e).__name__}: {e}"
-            print(f"[translate] 구글 실패 → MyMemory 대체 ({g_err})")
+        if time.time() >= _google_banned_until:      # 쿨다운 중이 아니면 구글 먼저
+            try:
+                return _translate_google(text, src, tgt)
+            except Exception as e:
+                g_err = f"{type(e).__name__}: {e}"
+                if "TooManyRequests" in g_err:
+                    _google_banned_until = time.time() + _GOOGLE_COOLDOWN
+                    print(f"[translate] 구글 제한 감지 → {int(_GOOGLE_COOLDOWN/60)}분간 "
+                          f"MyMemory 우선 사용. 원인: {g_err[:80]}")
+                else:
+                    print(f"[translate] 구글 실패 → MyMemory 대체 ({g_err})")
         try:
             return _translate_mymemory(text, lang)
         except Exception as e:
-            return "", f"google({g_err}) → MyMemory({type(e).__name__}: {e})"
+            return "", f"google → MyMemory({type(e).__name__}: {e})"
     except Exception as e:
         return "", f"{type(e).__name__}: {e}"
 
