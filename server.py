@@ -225,42 +225,78 @@ _TRANS_SRC = {"eng": "english", "kor": "korean", "chi_sim": "chinese (simplified
               "spa": "spanish", "fra": "french", "deu": "german"}
 
 
+def _translate_google(text: str, src: str, tgt: str) -> tuple[str, str]:
+    """구글(무료 엔드포인트) — 4,500자 단위 분할 + 긴 백오프 재시도."""
+    from deep_translator import GoogleTranslator
+    parts, chunk = [], ""
+    for para in text.split("\n\n"):
+        if len(chunk) + len(para) > 4500 and chunk:
+            parts.append(chunk)
+            chunk = para
+        else:
+            chunk = (chunk + "\n\n" + para).strip()
+    if chunk:
+        parts.append(chunk)
+    tr = GoogleTranslator(source=src, target=tgt)
+    out = []
+    for p in parts:
+        last = None
+        for wait in (0, 2, 5, 10):        # 백오프: 즉시→2s→5s→10s (최대 ~17s)
+            if wait:
+                time.sleep(wait)
+            try:
+                out.append(tr.translate(p) or "")
+                last = None
+                break
+            except Exception as e:
+                last = e
+        if last is not None:
+            raise last
+    return "\n\n".join(out), ""
+
+
+_MEM_CODES = {"eng": "en-GB", "kor": "ko-KR", "jpn": "ja-JP",
+              "chi_sim": "zh-CN", "rus": "ru-RU", "vie": "vi-VN",
+              "spa": "es-ES", "fra": "fr-FR", "deu": "de-DE"}
+
+
+def _translate_mymemory(text: str, lang: str) -> tuple[str, str]:
+    """대체 엔진 MyMemory — 구글이 차단/제한 중일 때 사용 (450자 단위 분할)."""
+    from deep_translator import MyMemoryTranslator
+    tr = MyMemoryTranslator(source=_MEM_CODES.get(lang, "en-GB"),
+                            target=_MEM_CODES.get("kor") if lang != "kor" else "en-GB")
+    # 450자 이하 문장 단위 청크
+    parts, cur = [], ""
+    for line in text.split("\n"):
+        if len(cur) + len(line) > 450 and cur:
+            parts.append(cur)
+            cur = line
+        else:
+            cur = (cur + " " + line).strip()
+    if cur:
+        parts.append(cur)
+    out = [tr.translate(p) or "" for p in parts]
+    return "\n".join(out), ""
+
+
 def translate_text(text: str, lang: str) -> tuple[str, str]:
-    """(번역문, 오류메시지) 반환 — 실패해도 읽어주기는 계속되도록.
-    구글 무료 엔드포인트 제한(초당 5회) 회피:
-    - 페이지 전체를 하나의 요청으로 합쳐 전송 (요청 수 최소화)
-    - TooManyRequests 시 1초 간격 최대 3회 재시도 (백오프)"""
+    """(번역문, 오류메시지) — 구글 실패 시 MyMemory로 자동 대체."""
     try:
-        from deep_translator import GoogleTranslator
-        target = _TRANS_TARGET.get(lang, "ko")
-        if target == "ko" and lang not in _TRANS_SRC:
+        tgt = _TRANS_TARGET.get(lang, "ko")
+        if tgt == "ko" and lang not in _TRANS_SRC:
             return "", ""
         src = _TRANS_SRC.get(lang, "english")
-        if src == _TRANS_TARGET.get(lang, ""):
+        if src == tgt:
             return text, ""
-        # 페이지 전체를 한 요청으로 — 문단 구분은 줄바꿈 유지
-        # (구글 엔드포인트 길이 제한 ~5000자, 초과 시 2번째 청크로 분할)
-        parts, chunk = [], ""
-        for para in text.split("\n\n"):
-            if len(chunk) + len(para) > 4500 and chunk:
-                parts.append(chunk)
-                chunk = para
-            else:
-                chunk = (chunk + "\n\n" + para).strip()
-        if chunk:
-            parts.append(chunk)
-        tr = GoogleTranslator(source=src, target=target)
-        out = []
-        for p in parts:
-            for attempt in range(3):
-                try:
-                    out.append(tr.translate(p) or "")
-                    break
-                except Exception as e:
-                    if attempt == 2:
-                        return "", f"{type(e).__name__}: {e}"
-                    time.sleep(1.0 + attempt)      # 1초 → 2초 백오프
-        return "\n\n".join(out), ""
+        try:
+            return _translate_google(text, src, tgt)
+        except Exception as e:
+            g_err = f"{type(e).__name__}: {e}"
+            print(f"[translate] 구글 실패 → MyMemory 대체 ({g_err})")
+        try:
+            return _translate_mymemory(text, lang)
+        except Exception as e:
+            return "", f"google({g_err}) → MyMemory({type(e).__name__}: {e})"
     except Exception as e:
         return "", f"{type(e).__name__}: {e}"
 
@@ -333,6 +369,18 @@ def _stage(msg: str):
     return wrap
 
 
+async def _bg_translate(job: dict, text: str, lang: str):
+    """번역 백그라운드 실행 — 읽어주기(TTS)를 기다리게 하지 않기 위해 별도 태스크."""
+    try:
+        tr, err = await asyncio.get_running_loop().run_in_executor(
+            None, translate_text, text, lang)
+        job["translation"], job["translation_error"] = tr, err
+        if err:
+            print(f"[translate] 실패: {err}")
+    finally:
+        job["translating"] = False
+
+
 async def _run_job(jid: str, img_path: Path, lang: str, do_translate: bool):
     job = JOBS[jid]
     loop = asyncio.get_running_loop()
@@ -347,14 +395,9 @@ async def _run_job(jid: str, img_path: Path, lang: str, do_translate: bool):
             job["error"] = "글자를 인식하지 못했습니다. 페이지를 더 밝고 정면으로, 가까이 찍어보세요."
             return
 
-        # 2) 번역 (선택) — 실패해도 치명적이지 않음, 이유는 job에 기록해 화면 표시
-        if do_translate:
-            job["status"] = "translate"
-            tr, tr_err = await loop.run_in_executor(None, translate_text, text, lang)
-            job["translation"] = tr
-            if tr_err:
-                job["translation_error"] = tr_err
-                print(f"[translate] 실패: {tr_err}")
+        # 2) 번역을 백그라운드로 시작 → 읽어주기가 번역을 기다리지 않음
+        tr_task = (asyncio.create_task(_bg_translate(job, text, lang))
+                   if do_translate else None)
 
         # 3) TTS — edge-tts → SAPI 대체
         job["status"] = "tts"
@@ -373,6 +416,8 @@ async def _run_job(jid: str, img_path: Path, lang: str, do_translate: bool):
 
         job["status"] = "done"
         job["ms"] = int((time.time() - t0) * 1000)
+        if tr_task:
+            await tr_task          # 음성은 이미 재생 중 — 번역 완료까지만 폴링 유지
     except Exception as exc:  # 절대 조용히 죽지 않게
         job["status"] = "error"
         job["error"] = f"{type(exc).__name__}: {exc}"
@@ -392,8 +437,8 @@ async def process(image: UploadFile = File(...),
     img_path.write_bytes(raw)
 
     job = {"id": jid, "status": "queued", "text": "", "translation": "",
-           "translation_error": "", "audio": "", "audio_ext": "", "error": "", "ms": 0,
-           "image": img_path.name}
+           "translation_error": "", "translating": False, "audio": "",
+           "audio_ext": "", "error": "", "ms": 0, "image": img_path.name}
     with _LOCK:
         JOBS[jid] = job
     task = asyncio.create_task(_run_job(jid, img_path, lang, translate == "true"))
