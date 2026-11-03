@@ -132,15 +132,23 @@ function poll(id) {
     try {
       const j = await (await fetch("/api/status/" + id)).json();
       if (j.status === "error") { clearInterval(polling); return fail(j.error || "처리 실패"); }
+      if (!j.text) $("ts").textContent = "";        // 이전 작업 결과 잔존 방지
+      if (!j.translation) $("ko").style.display = "none";
       $("st").textContent = STAGE[j.status] || j.status;
       if (j.text)    $("ts").textContent = j.text;
       if (j.translation) { $("ko").textContent = j.translation; $("ko").style.display = "block"; }
       if (j.status !== "done") return;
       clearInterval(polling);
+      $("spin").style.display = "none";             // 완료 시 스피너 정지 (버그 수정)
       const au = $("au"), src = "/api/audio/" + id;
       au.src = src; au.style.display = "block";
       $("dl").href = src; $("dl").download = "snap2read." + (j.audio_ext || "mp3");
       $("dl").style.display = "inline-block";
+      if (j.translation_error)                      // 번역 실패 사유 표시 (신규)
+        $("ko").innerHTML = "⚠️ 번역 실패: " + j.translation_error +
+          "<br><small>(번역은 온라인 구글 API 사용 — PC의 인터넷 연결 확인 필요)</small>";
+      $("ko").style.display = "block";
+      if (j.text) $("ts").textContent = j.text;     // 최종 스냅샷 확정 반영
       $("ms").textContent = "⏱ 처리 " + ((j.ms / 1000) || "?") + "초 · 목소리 " +
         (LANG_NAME[$("lang").value] || $("lang").value) + " · " + (j.audio_ext === "wav" ? "PC 오프라인 음성(SAPI)" : "자연 음성(edge-tts)");
       if ($("auto").checked) au.play().catch(() => {});
@@ -149,6 +157,8 @@ function poll(id) {
 }
 
 function fail(msg) {
+  if (polling) clearInterval(polling);
+  polling = null;
   $("spin").style.display = "none"; $("st").textContent = "실패";
   $("err").textContent = "⚠️ " + msg;
 }

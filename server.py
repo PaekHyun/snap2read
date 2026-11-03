@@ -225,15 +225,16 @@ _TRANS_SRC = {"eng": "english", "kor": "korean", "chi_sim": "chinese (simplified
               "spa": "spanish", "fra": "french", "deu": "german"}
 
 
-def translate_text(text: str, lang: str) -> str:
+def translate_text(text: str, lang: str) -> tuple[str, str]:
+    """(번역문, 오류메시지) 반환 — 실패해도 읽어주기는 계속되도록."""
     try:
         from deep_translator import GoogleTranslator
         target = _TRANS_TARGET.get(lang, "ko")
         if target == "ko" and lang not in _TRANS_SRC:
-            return ""
+            return "", ""
         src = _TRANS_SRC.get(lang, "english")
         if src == _TRANS_TARGET.get(lang, ""):
-            return text
+            return text, ""
         parts, chunk = [], ""
         for para in text.split("\n\n"):
             if len(chunk) + len(para) > 4000 and chunk:
@@ -244,9 +245,9 @@ def translate_text(text: str, lang: str) -> str:
         if chunk:
             parts.append(chunk)
         out = [GoogleTranslator(source=src, target=target).translate(p) or "" for p in parts]
-        return "\n\n".join(out)
-    except Exception:
-        return ""  # 번역 실패는 치명적이지 않음 — 읽어주기는 계속
+        return "\n\n".join(out), ""
+    except Exception as e:
+        return "", f"{type(e).__name__}: {e}"
 
 
 # ---------------------------------------------------------------- TTS
@@ -331,11 +332,14 @@ async def _run_job(jid: str, img_path: Path, lang: str, do_translate: bool):
             job["error"] = "글자를 인식하지 못했습니다. 페이지를 더 밝고 정면으로, 가까이 찍어보세요."
             return
 
-        # 2) 번역 (선택)
+        # 2) 번역 (선택) — 실패해도 치명적이지 않음, 이유는 job에 기록해 화면 표시
         if do_translate:
             job["status"] = "translate"
-            job["translation"] = await loop.run_in_executor(
-                None, translate_text, text, lang)
+            tr, tr_err = await loop.run_in_executor(None, translate_text, text, lang)
+            job["translation"] = tr
+            if tr_err:
+                job["translation_error"] = tr_err
+                print(f"[translate] 실패: {tr_err}")
 
         # 3) TTS — edge-tts → SAPI 대체
         job["status"] = "tts"
@@ -373,7 +377,7 @@ async def process(image: UploadFile = File(...),
     img_path.write_bytes(raw)
 
     job = {"id": jid, "status": "queued", "text": "", "translation": "",
-           "audio": "", "audio_ext": "", "error": "", "ms": 0,
+           "translation_error": "", "audio": "", "audio_ext": "", "error": "", "ms": 0,
            "image": img_path.name}
     with _LOCK:
         JOBS[jid] = job
