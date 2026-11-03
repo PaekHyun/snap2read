@@ -6,6 +6,7 @@
 import asyncio
 import os
 import re
+import shutil
 import threading
 import time
 import uuid
@@ -18,6 +19,51 @@ from fastapi.staticfiles import StaticFiles
 BASE = Path(__file__).resolve().parent
 UPLOADS = BASE / "uploads"
 UPLOADS.mkdir(exist_ok=True)
+
+# 로컬 모델 폴더 (프로젝트 안에 직접 넣어둔 경우 우선 사용 — 자동 다운로드 생략)
+# 필수: det/rec 2개 / 선택: 방향 판별 2개 (있으면 네트워크 의존성 완전 제거)
+PADDLE_MODEL_DIRS = {
+    "det": BASE / "PP-OCRv6_medium_det",
+    "rec": BASE / "PP-OCRv6_medium_rec",
+    "textline": BASE / "PP-LCNet_x1_0_textline_ori",
+    "doc": BASE / "PP-LCNet_x1_0_doc_ori",
+}
+
+# PaddleOCR 3.x: 모델 소스 연결 체크 생략 (매 요청 수 초 절약, 캐시된 모델 사용)
+os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+
+
+def _sync_local_models_to_cache() -> None:
+    """프로젝트 안의 모델 폴더를 PaddleX 캐시(사용자 폴더/.paddlex/official_models)로
+    동기화. PaddleOCR은 model_dir를 지정해도 내부 (name, None, None) 검증에서
+    캐시를 참조하는 경우가 있어, 완전 오프라인을 위해 캐시를 미리 채운다.
+    - 캐시에 없거나 용량이 작은(미완전 다운로드) 파일만 복사
+    - 복사 실패 시 조용히 건너뜀 (기존 동작 유지)"""
+    try:
+        cache = Path(os.path.expanduser("~")) / ".paddlex" / "official_models"
+        cache.mkdir(parents=True, exist_ok=True)
+        for name, src in PADDLE_MODEL_DIRS.items():
+            if not src.is_dir():
+                continue
+            dst = cache / src.name
+            dst.mkdir(exist_ok=True)
+            for f in src.iterdir():
+                if f.suffix.lower() not in (".json", ".yml", ".yaml", ".pdiparams"):
+                    continue
+                target = dst / f.name
+                need = (not target.exists()
+                        or target.stat().st_size != f.stat().st_size)
+                if need:
+                    try:
+                        shutil.copy2(f, target)
+                        print(f"[model-sync] {f.name} → {target}")
+                    except OSError as e:
+                        print(f"[model-sync] 건너뜀 {f.name}: {e}")
+    except Exception as e:
+        print(f"[model-sync] 실패(무시하고 계속): {e}")
+
+
+_sync_local_models_to_cache()
 
 app = FastAPI(title="snap2read")
 
@@ -35,6 +81,17 @@ def _pick_ocr_engine() -> str:
         return "tesseract"
 
 OCR_ENGINE = _pick_ocr_engine()
+if OCR_ENGINE == "paddle":
+    try:
+        import paddle
+        import paddleocr
+        print(f"OCR: PaddleOCR {getattr(paddleocr, '__version__', '?')} / "
+              f"paddle {getattr(paddle, '__version__', '?')} "
+              f"(GPU={paddle.device.is_compiled_with_cuda()})")
+    except Exception:
+        pass
+else:
+    print("OCR: Tesseract (PaddleOCR 미설치)")
 
 # Tesseract 언어코드 → PaddleOCR 언어코드
 _PADDLE_LANG = {"eng": "en", "kor": "korean", "jpn": "japan",
@@ -46,19 +103,68 @@ def _ocr_paddle(path: str, lang: str) -> str:
     from paddleocr import PaddleOCR
     engine_name = f"_paddle_{lang}"
     if not hasattr(app.state, engine_name):
-        setattr(app.state, engine_name,
-                PaddleOCR(use_angle_cls=True, lang=_PADDLE_LANG.get(lang, "en"),
-                          show_log=False))
-    engine = getattr(app.state, engine_name)
-    result = engine.ocr(path, cls=True)
-    lines = []
-    for page in result or []:
-        for item in page or []:
+        lang_code = _PADDLE_LANG.get(lang, "en")
+        # 필수 2개(det/rec)만 있는지 검사 — 방향 모델(textline/doc)은 선택
+        local_ok = (PADDLE_MODEL_DIRS["det"].is_dir()
+                    and PADDLE_MODEL_DIRS["rec"].is_dir())
+        if local_ok:
+            # 로컬 PP-OCRv6_medium det/rec 사용 (50개 언어 단일 인식 모델) —
+            # 방향 보정 모델(textline/doc_ori)은 비활성화해 네트워크 의존성 제거.
+            # 로드 실패(PaddleOCR 구버전 등) 시 아래 기본 경로로 자동 폴백
             try:
-                lines.append(item[1][0])
+                kw = dict(
+                    text_detection_model_name="PP-OCRv6_medium_det",
+                    text_detection_model_dir=str(PADDLE_MODEL_DIRS["det"]),
+                    text_recognition_model_name="PP-OCRv6_medium_rec",
+                    text_recognition_model_dir=str(PADDLE_MODEL_DIRS["rec"]),
+                    use_doc_orientation_classify=False,
+                    use_doc_unwarping=False,
+                    use_textline_orientation=False,
+                )
+                # 방향 판별 모델도 로컬에 있으면 그 위치를 지정 (초기화 시 다운로드 방지)
+                if PADDLE_MODEL_DIRS["textline"].is_dir():
+                    kw["textline_orientation_model_dir"] = str(PADDLE_MODEL_DIRS["textline"])
+                if PADDLE_MODEL_DIRS["doc"].is_dir():
+                    kw["doc_orientation_classify_model_dir"] = str(PADDLE_MODEL_DIRS["doc"])
+                eng = PaddleOCR(**kw)
+                setattr(app.state, engine_name, eng)
+                return _ocr_paddle_predict(eng, path)
+            except Exception as e:
+                print(f"[ocr] 로컬 v6 로드 실패 → 기본 경로로 대체: "
+                      f"{type(e).__name__}: {e}")
+        try:
+            eng = PaddleOCR(use_textline_orientation=True, lang=lang_code)
+        except TypeError:
+            eng = PaddleOCR(use_angle_cls=True, show_log=False, lang=lang_code)
+        setattr(app.state, engine_name, eng)
+    engine = getattr(app.state, engine_name)
+    return _ocr_paddle_predict(engine, path)
+
+
+def _ocr_paddle_predict(engine, path: str) -> str:
+    # 3.x predict API 우선, 실패 시 구버전(2.x) 호환 호출
+    try:
+        result = engine.predict(path)
+        lines = []
+        for res in result or []:
+            try:
+                lines.extend(res["rec_texts"])
             except Exception:
-                continue
-    return "\n".join(lines)
+                try:
+                    lines.extend(res.json["res"]["rec_texts"])
+                except Exception:
+                    pass
+        return "\n".join(lines)
+    except AttributeError:
+        result = engine.ocr(path, cls=True)
+        lines = []
+        for page in result or []:
+            for item in page or []:
+                try:
+                    lines.append(item[1][0])
+                except Exception:
+                    continue
+        return "\n".join(lines)
 
 
 def _ocr_tesseract(path: str, lang: str) -> str:
@@ -78,8 +184,9 @@ def ocr_image(path: str, lang: str) -> str:
     if OCR_ENGINE == "paddle":
         try:
             return _ocr_paddle(path, lang).strip()
-        except Exception:
-            pass  # GPU 경로 실패 시 Tesseract로 대체
+        except Exception as e:
+            print(f"[ocr] PaddleOCR 실패 → Tesseract 대체: "
+                  f"{type(e).__name__}: {e}")
     return _ocr_tesseract(path, lang).strip()
 
 

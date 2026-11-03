@@ -1,5 +1,7 @@
 __pycache__/
 uploads/
+PP-OCRv6_*/
+PP-LCNet_*/
 *.pyc
 *.mp3
 *.wav
