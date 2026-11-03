@@ -65,12 +65,37 @@ pip install pytesseract
 - 설치 후 **언어팩**: 한국어는 `kor`, 간체 중국어는 `chi_sim` (설치 프로그램에서 언어 선택 또는 [tessdata](https://github.com/tesseract-ocr/tessdata)에서 다운로드해 설치 폴더의 `tessdata`에 복사)
 - 서버는 Tesseract가 한 개 언어만 있어도 동작합니다 (`eng` 하나면 영어는 OK).
 
+## Windows 부팅 시 자동 실행
+
+저장소의 `register_autostart.ps1`이 로그온 시 서버를 자동 실행하는 예약 작업을 등록·제거합니다 (작업 스케줄러 사용).
+
+```powershell
+# 등록 (이 폴더에서 실행 — server.py 위치를 자동으로 잡음)
+powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1
+
+# 즉시 시작 (재부팅 없이 테스트)
+Start-ScheduledTask -TaskName snap2read
+
+# 제거
+powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1 -Remove
+```
+
+동작 방식:
+
+- 작업 이름 `snap2read`, **로그온 시** 트리거로 `python server.py` 실행 (작업 폴더 = 스크립트가 있는 폴더)
+- 노트북 배터리에서도 실행, 실행 시간 제한 없음, **중복 실행 방지**, 실패 시 1분 간격 최대 3회 재시작
+- 등록은 멱등(idempotent) — 다시 실행하면 기존 작업을 갱신
+- 콘솔 창을 숨기려면 작업 스케줄러에서 프로그램을 `pythonw.exe`로 변경
+
+> 💡 최초 1회는 수동으로 서버를 실행해 방화벽 "사설 네트워크 허용"을 미리 승인해 두세요. 자동 실행 프로세스는 방화벽 프롬프트를 놓치기 쉽습니다.
+
 ## 구성
 
 | 파일 | 역할 |
 |------|------|
 | `server.py` | FastAPI 서버 — OCR → 번역 → TTS → 스트리밍/다운로드 |
 | `static/index.html` | 폰용 웹 UI (카메라 촬영 → 진행상황 → 자동 재생 → 저장) |
+| `register_autostart.ps1` | Windows 로그온 자동실행 등록/제거 스크립트 |
 | `uploads/` | 업로드 사진·생성 음성 캐시 |
 
 ## 파이프라인
