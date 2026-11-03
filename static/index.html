@@ -163,9 +163,10 @@ function poll(id) {
         $("ko").style.display = "block";
       }
       const au = $("au"), src = "/api/audio/" + id;
+      au.src = src; au.style.display = "block";   // 재생 플레이어 표시 (이전 커밋에서 누락됐던 복구)
       $("dl").href = src; $("dl").download = "snap2read." + (j.audio_ext || "mp3");
       $("dl").style.display = "inline-block";
-      if (j.translation_error)                      // 번역 실패 사유 표시 (신규)
+      if (j.translation_error)                      // 번역 실패 사유 표시
         $("ko").innerHTML = "⚠️ 번역 실패: " + j.translation_error +
           "<br><small>(번역은 온라인 API 사용 — 잠시 후 재시도 필요할 수 있음)</small>";
       $("ko").style.display = "block";
