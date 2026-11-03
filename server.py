@@ -226,7 +226,10 @@ _TRANS_SRC = {"eng": "english", "kor": "korean", "chi_sim": "chinese (simplified
 
 
 def translate_text(text: str, lang: str) -> tuple[str, str]:
-    """(번역문, 오류메시지) 반환 — 실패해도 읽어주기는 계속되도록."""
+    """(번역문, 오류메시지) 반환 — 실패해도 읽어주기는 계속되도록.
+    구글 무료 엔드포인트 제한(초당 5회) 회피:
+    - 페이지 전체를 하나의 요청으로 합쳐 전송 (요청 수 최소화)
+    - TooManyRequests 시 1초 간격 최대 3회 재시도 (백오프)"""
     try:
         from deep_translator import GoogleTranslator
         target = _TRANS_TARGET.get(lang, "ko")
@@ -235,16 +238,28 @@ def translate_text(text: str, lang: str) -> tuple[str, str]:
         src = _TRANS_SRC.get(lang, "english")
         if src == _TRANS_TARGET.get(lang, ""):
             return text, ""
+        # 페이지 전체를 한 요청으로 — 문단 구분은 줄바꿈 유지
+        # (구글 엔드포인트 길이 제한 ~5000자, 초과 시 2번째 청크로 분할)
         parts, chunk = [], ""
         for para in text.split("\n\n"):
-            if len(chunk) + len(para) > 4000 and chunk:
+            if len(chunk) + len(para) > 4500 and chunk:
                 parts.append(chunk)
                 chunk = para
             else:
                 chunk = (chunk + "\n\n" + para).strip()
         if chunk:
             parts.append(chunk)
-        out = [GoogleTranslator(source=src, target=target).translate(p) or "" for p in parts]
+        tr = GoogleTranslator(source=src, target=target)
+        out = []
+        for p in parts:
+            for attempt in range(3):
+                try:
+                    out.append(tr.translate(p) or "")
+                    break
+                except Exception as e:
+                    if attempt == 2:
+                        return "", f"{type(e).__name__}: {e}"
+                    time.sleep(1.0 + attempt)      # 1초 → 2초 백오프
         return "\n\n".join(out), ""
     except Exception as e:
         return "", f"{type(e).__name__}: {e}"
