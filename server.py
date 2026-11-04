@@ -626,6 +626,25 @@ async def _run_job(jid: str, img_path: Path, lang: str):
 
 
 # ---------------------------------------------------------------- API
+@app.get("/api/latest")
+async def latest():
+    """가장 최근 작업 ID — teacher 화면이 폰 업로드를 자동 수신하는 데 사용."""
+    with _LOCK:
+        if not JOBS:
+            return {"id": ""}
+        jid = max(JOBS, key=lambda k: JOBS[k].get("created", 0))
+    return {"id": jid}
+
+
+@app.get("/api/jobs")
+async def jobs():
+    """최근 10개 작업 요약 (최신순) — teacher 화면의 목록용."""
+    with _LOCK:
+        items = sorted(JOBS.values(), key=lambda j: j.get("created", 0), reverse=True)[:10]
+    return [{"id": j["id"], "status": j["status"], "error": j.get("error", ""),
+             "image": j.get("image", "")} for j in items]
+
+
 @app.post("/api/process")
 async def process(image: UploadFile = File(...),
                   lang: str = Form("eng")):
@@ -639,7 +658,7 @@ async def process(image: UploadFile = File(...),
 
     job = {"id": jid, "status": "queued", "text": "", "audio": "",
            "audio_ext": "", "error": "", "ms": 0, "ocr_ms": 0, "tts_ms": 0,
-           "image": img_path.name}
+           "image": img_path.name, "created": time.time()}
     with _LOCK:
         JOBS[jid] = job
     task = asyncio.create_task(_run_job(jid, img_path, lang))
@@ -722,6 +741,11 @@ async def image(jid: str):
     if not job:
         raise HTTPException(404, "작업을 찾을 수 없습니다.")
     return FileResponse(UPLOADS / job["image"], media_type="image/jpeg")
+
+
+@app.get("/teacher")
+async def teacher():
+    return FileResponse(BASE / "static" / "teacher.html")
 
 
 @app.get("/")

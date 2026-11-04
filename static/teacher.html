@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📖</text></svg>">
+<title>snap2read — 교사용 화면</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body {
+    margin: 0; min-height: 100vh; padding: 18px 20px calc(24px + env(safe-area-inset-bottom));
+    background: linear-gradient(160deg, #0f172a, #1e293b 60%, #0b1120);
+    color: #e2e8f0; font-family: -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+    max-width: 900px; margin-inline: auto;
+  }
+  h1 { font-size: 22px; margin: 4px 0 2px; letter-spacing: .3px; }
+  .sub { color: #94a3b8; font-size: 13px; margin-bottom: 14px; }
+  .card {
+    background: rgba(30,41,59,.75); border: 1px solid #334155; border-radius: 16px;
+    padding: 16px; margin-bottom: 14px; backdrop-filter: blur(6px);
+  }
+  label { font-size: 12px; color: #94a3b8; display: block; margin-bottom: 6px; }
+  select, input[type="file"] { display: none; }
+  .row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .chk { font-size: 13px; color: #cbd5e1; display: flex; align-items: center; gap: 6px; }
+  .big {
+    display: block; width: 100%; padding: 14px; border: 0; border-radius: 12px;
+    background: linear-gradient(135deg, #3b82f6, #8b5cf6); color: #fff;
+    font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 10px;
+  }
+  .big:disabled { opacity: .5; cursor: default; }
+  .st { font-size: 13.5px; color: #93c5fd; margin-top: 10px; min-height: 18px; }
+  .spin {
+    display: none; width: 14px; height: 14px; border: 2px solid #64748b;
+    border-top-color: #60a5fa; border-radius: 50%; margin-right: 8px;
+    animation: r 1s linear infinite; vertical-align: middle;
+  }
+  @keyframes r { to { transform: rotate(360deg); } }
+  .err { color: #fca5a5; font-size: 13.5px; margin-top: 8px; min-height: 18px; }
+  .ts { white-space: pre-wrap; line-height: 1.75; font-size: 16.5px; }
+  #edit { width: 100%; min-height: 150px; padding: 10px; border-radius: 10px;
+          border: 1px solid #475569; background: #0f172a; color: #e2e8f0;
+          font-size: 15px; line-height: 1.6; resize: vertical; }
+  .ko { color: #a5b4fc; line-height: 1.75; font-size: 15px;
+        border-top: 1px dashed #334155; margin-top: 10px; padding-top: 10px;
+        white-space: pre-wrap; min-height: 20px; }
+  .ms { color: #64748b; font-size: 12px; margin-top: 8px; }
+  .empty { color: #64748b; font-size: 13px; }
+  a.dl {
+    display: inline-block; margin: 10px 8px 0 0; padding: 9px 14px; border-radius: 10px;
+    background: #1e40af; color: #dbeafe; text-decoration: none; font-size: 13.5px;
+  }
+  audio { width: 100%; margin-top: 10px; display: none; }
+  .thumb { width: 100%; border-radius: 10px; margin-top: 10px; display: none; }
+</style>
+</head>
+<body>
+  <h1>📖 snap2read — 교사용</h1>
+  <div class="sub">폰에서 찍은 사진이 자동으로 이 화면에 표시됩니다 · 키보드로 바로 수정 가능</div>
+
+  <div class="card">
+    <label for="lang">책의 언어 (폰에서 설정한 값과 동기화됨)</label>
+    <select id="lang">
+      <option value="eng" selected>영어</option>
+      <option value="kor">한국어</option>
+      <option value="jpn">일본어</option>
+      <option value="chi_sim">중국어(간체)</option>
+      <option value="rus">러시아어</option>
+      <option value="vie">베트남어</option>
+      <option value="spa">스페인어</option>
+      <option value="fra">프랑스어</option>
+      <option value="deu">독일어</option>
+    </select>
+    <div class="row">
+      <span class="chk"><input type="checkbox" id="auto" checked> 새 작업 도착 시 자동 재생</span>
+      <span class="chk"><input type="checkbox" id="watch" checked> 폰 업로드 자동 수신</span>
+    </div>
+    <button class="big" id="go">📷 이 태블릿에서 사진 찍기 / 선택</button>
+    <input type="file" id="shot" accept="image/*" capture="environment">
+  </div>
+
+  <div class="card" id="out" style="display:none">
+    <div class="st"><span class="spin" id="spin"></span><span id="st">대기 중…</span></div>
+    <div class="err" id="err"></div>
+    <div class="ts" id="ts"></div>
+    <div id="editbox" style="display:none">
+      <label for="edit">인식 결과 수정 (잘못된 글자를 고치고 다시 읽어주기)</label>
+      <textarea id="edit"></textarea>
+    </div>
+    <div class="ko" id="ko" style="display:none"></div>
+    <div class="ms" id="ms"></div>
+    <audio id="au" controls></audio>
+    <a class="dl" id="rr" style="display:none" download>🔁 다시 읽기</a>
+    <a class="dl" id="tl" style="display:none">🌐 번역</a>
+    <a class="dl" id="dl" style="display:none" download>⬇ MP3/WAV 저장</a>
+    <img class="thumb" id="thumb" alt="원본 페이지">
+  </div>
+
+  <div class="card" id="listcard" style="display:none">
+    <label>최근 작업 (눌러서 다시 열기)</label>
+    <div id="list" class="empty"></div>
+  </div>
+
+<script>
+const $ = id => document.getElementById(id);
+const STAGE = { queued:"대기 중…", ocr:"글자 인식 중…", tts:"목소리 만드는 중…" };
+let polling = null, watcher = null, curId = "";
+
+function fail(msg) {
+  if (polling) clearInterval(polling);
+  polling = null;
+  $("spin").style.display = "none"; $("st").textContent = "실패";
+  $("err").textContent = "⚠️ " + msg;
+}
+
+function openJob(id, autoplay) {
+  if (!id) return;
+  curId = id;
+  $("out").style.display = "block";
+  $("err").textContent = ""; $("ts").textContent = ""; $("edit").value = "";
+  $("ko").textContent = ""; $("ko").style.display = "none";
+  $("editbox").style.display = "none"; $("rr").style.display = "none";
+  $("tl").style.display = "none"; $("tl").dataset.job = "";
+  $("au").style.display = "none"; $("dl").style.display = "none"; $("ms").textContent = "";
+  $("thumb").style.display = "none";
+  $("spin").style.display = "inline-block"; $("st").textContent = STAGE.queued;
+  if (polling) clearInterval(polling);
+  polling = setInterval(async () => {
+    try {
+      const j = await (await fetch("/api/status/" + id)).json();
+      if (j.status === "error") { clearInterval(polling); return fail(j.error || "처리 실패"); }
+      if (!j.text) $("ts").textContent = "";
+      $("st").textContent = STAGE[j.status] || j.status;
+      if (j.text)    $("ts").textContent = j.text;
+      if (j.status !== "done") return;
+      clearInterval(polling);
+      $("spin").style.display = "none";
+      $("st").textContent = "완료";
+      const au = $("au"), src = "/api/audio/" + id;
+      au.src = src; au.style.display = "block";
+      $("dl").href = src; $("dl").download = "snap2read." + (j.audio_ext || "mp3");
+      $("dl").style.display = "inline-block";
+      $("ms").textContent = "⏱ 처리 " + ((j.ms / 1000) || "?") + "초" +
+        " (인식 " + (((j.ocr_ms || 0) / 1000) || "?") + "s · 말하기 " +
+        (((j.tts_ms || 0) / 1000) || "?") + "s)";
+      if (j.text) {
+        $("edit").value = j.text;
+        $("editbox").style.display = "block";
+        $("rr").style.display = "inline-block";
+        $("tl").style.display = "inline-block";
+        $("tl").dataset.job = id;
+      }
+      $("thumb").src = "/api/image/" + id;
+      $("thumb").style.display = "block";
+      if (autoplay && $("auto").checked) au.play().catch(() => {});
+      refreshList();
+    } catch (e) { /* 폴링 오류 무시 — 다음 틱에서 재시도 */ }
+  }, 700);
+}
+
+// 폰 업로드 자동 수신 — 최신 작업 ID를 폴링해 새 것이 나오면 자동으로 엶
+function startWatcher() {
+  if (watcher) clearInterval(watcher);
+  watcher = setInterval(async () => {
+    if (!$("watch").checked) return;
+    try {
+      const r = await (await fetch("/api/latest")).json();
+      if (r.id && r.id !== curId) openJob(r.id, true);
+    } catch (e) { /* 무시 */ }
+  }, 1500);
+}
+
+// 최근 작업 목록
+async function refreshList() {
+  try {
+    const items = await (await fetch("/api/jobs")).json();
+    if (!items.length) return;
+    $("listcard").style.display = "block";
+    $("list").innerHTML = items.map(it =>
+      `<div style="padding:6px 0; border-bottom:1px solid #1e293b">
+         <a href="#" onclick="openJob('${it.id}', false); return false"
+            style="color:#93c5fd; text-decoration:none; font-size:13.5px">
+           ${it.id.slice(0,6)}… ${it.status === "done" ? "✅" : it.status === "error" ? "⚠️ " + (it.error||"").slice(0,30) : "⏳"}
+         </a></div>`).join("");
+  } catch (e) { /* 무시 */ }
+}
+
+// 태블릿 직접 촬영 (폰과 동일 파이프라인)
+$("shot").onchange = async (e) => {
+  const f = e.target.files[0];
+  if (!f) return;
+  $("out").style.display = "block";
+  $("err").textContent = ""; $("ts").textContent = ""; $("edit").value = "";
+  $("ko").textContent = ""; $("ko").style.display = "none";
+  $("editbox").style.display = "none"; $("rr").style.display = "none";
+  $("au").style.display = "none"; $("dl").style.display = "none"; $("ms").textContent = "";
+  $("spin").style.display = "inline-block"; $("st").textContent = "사진 전송 중…";
+  $("go").disabled = true;
+  if (polling) clearInterval(polling);
+  try {
+    const fd = new FormData();
+    fd.append("image", f);
+    fd.append("lang", $("lang").value);
+    const r = await fetch("/api/process", { method: "POST", body: fd });
+    if (!r.ok) throw new Error("업로드 실패 (" + r.status + ")");
+    const { id } = await r.json();
+    $("go").disabled = false;
+    openJob(id, true);
+  } catch (err) { $("go").disabled = false; fail(String(err.message || err)); }
+};
+$("go").onclick = () => $("shot").click();
+
+// 수정 후 다시 읽기
+$("rr").onclick = async (e) => {
+  e.preventDefault();
+  const id = curId, text = $("edit").value.trim();
+  if (!id || !text) return;
+  $("spin").style.display = "inline-block"; $("st").textContent = "목소리 다시 만드는 중…";
+  $("err").textContent = "";
+  try {
+    const fd = new FormData();
+    fd.append("text", text);
+    const r = await fetch("/api/reread/" + id, { method: "POST", body: fd });
+    if (!r.ok) throw new Error((await r.json()).detail || r.status);
+    const j = await r.json();
+    $("spin").style.display = "none"; $("st").textContent = "완료";
+    $("au").src = "/api/audio/" + id;
+    $("au").play().catch(() => {});
+    $("dl").href = "/api/audio/" + id;
+    $("dl").download = "snap2read." + (j.audio_ext || "mp3");
+  } catch (err) { fail(String(err.message || err)); }
+};
+
+// LLM 번역 — 스트리밍으로 번역 칸에 실시간 표시 (수정된 텍스트 기준)
+$("tl").onclick = async (e) => {
+  e.preventDefault();
+  const id = $("tl").dataset.job;
+  const text = ($("edit").value || $("ts").textContent).trim();
+  if (!id || !text) return;
+  const ko = $("ko");
+  ko.style.display = "block"; ko.textContent = "…";
+  try {
+    const fd = new FormData();
+    fd.append("text", text);
+    const r = await fetch("/api/translate/" + id, { method: "POST", body: fd });
+    if (!r.ok) {
+      const d = await r.json().catch(() => ({}));
+      throw new Error(d.detail || r.status);
+    }
+    const reader = r.body.getReader(), dec = new TextDecoder();
+    ko.textContent = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      ko.textContent += dec.decode(value, { stream: true });
+    }
+  } catch (err) {
+    ko.textContent = "⚠️ 번역 실패: " + (err.message || err);
+  }
+};
+
+// 언어 선택 — 폰과 공유되는 서버 기본값은 없으므로 로컬 저장만
+$("lang").value = localStorage.getItem("s2r_lang") || "eng";
+$("lang").onchange = () => localStorage.setItem("s2r_lang", $("lang").value);
+
+// 자동재생 정책: 첫 사용자 터치 이후 autoplay 허용 — 안내 표시
+document.addEventListener("click", function once() {
+  document.removeEventListener("click", once);
+  console.log("autoplay unlocked");
+}, { once: true });
+
+startWatcher();
+refreshList();
+setInterval(refreshList, 5000);
+</script>
+</body>
+</html>
