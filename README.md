@@ -123,10 +123,10 @@ snap2read/
 
 ---
 
-## Windows 부팅 시 자동 실행
+## Windows 부팅 시 자동 실행 / 바로가기 실행
 
 ```powershell
-# 등록 (이 폴더에서 실행 — server.py 위치를 자동으로 잡음)
+# 등록 (이 폴더에서 실행 — miniforge envs\tf\python.exe를 자동 탐색, 없으면 PATH의 python)
 powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1
 
 # 즉시 시작 (재부팅 없이 테스트)
@@ -137,9 +137,13 @@ powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1 -Remove
 ```
 
 - 작업 이름 `snap2read`, **로그온 시** `python server.py` 실행, 중복 실행 방지, 실패 시 재시작
+- **miniforge (tf) 환경 자동 탐색**: `%USERPROFILE%\miniforge3\envs\tf\python.exe` 등 표준 위치를 찾아 사용 — 환경 이름이 다르면 스크립트 상단 `$CondaEnv` 수정
 - 등록은 멱등 — 다시 실행하면 갱신
 - 콘솔 창 숨기려면 작업 스케줄러에서 프로그램을 `pythonw.exe`로 변경
 - 💡 최초 1회는 수동 실행으로 방화벽 "사설 네트워크 허용"을 미리 승인
+
+**바로가기 한 번 클릭으로 실행**: `start_server.bat` 더블클릭 — miniforge(tf) 환경으로 서버 시작.
+바탕화면에 이 bat의 바로가기를 만들어 두면 클릭 한 번으로 실행됩니다. (창을 닫으면 서버 종료)
 
 ---
 

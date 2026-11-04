@@ -27,9 +27,16 @@ if ($Remove) {
 
 if (-not (Test-Path $ServerPy)) { throw "server.py 를 찾을 수 없습니다: $ServerPy" }
 
-# python.exe 찾기 (PATH 기준)
-$Python = (Get-Command python -ErrorAction SilentlyContinue).Source
-if (-not $Python) { throw "python.exe 를 PATH에서 찾지 못했습니다. Python 설치 후 다시 실행하세요." }
+# python.exe 찾기 — 1) conda 환경(예: miniforge의 tf) 2) PATH 순
+$CondaEnv = "tf"
+$Python = $null
+foreach ($root in @("$env:USERPROFILE\miniforge3\envs", "$env:USERPROFILE\miniconda3\envs", "$env:USERPROFILE\anaconda3\envs", "C:\ProgramData\miniforge3\envs")) {
+    $cand = Join-Path $root "$CondaEnv\python.exe"
+    if (Test-Path $cand) { $Python = $cand; break }
+}
+if (-not $Python) { $Python = (Get-Command python -ErrorAction SilentlyContinue).Source }
+if (-not $Python) { throw "python.exe 를 찾지 못했습니다. miniforge 환경('$CondaEnv') 또는 PATH의 python 확인 후 다시 실행하세요." }
+Write-Host "python: $Python"
 
 # 이미 등록돼 있으면 갱신(멱등)
 if (Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue) {
