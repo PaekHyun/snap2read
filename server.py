@@ -28,6 +28,7 @@ PORT = 9000                                 # 서버 포트 (방화벽 허용 �
 # ===== LLM 번역 설정 — 바꿀 값은 이 블록에서만 수정하세요 =====
 LLM_MODEL_DIR = BASE / "Qwen3.5-9B-GGUF"   # 로컬 GGUF 폴더 (상대경로 ./Qwen3.5-9B-GGUF)
 LLM_MODEL_FILE = ""                        # 비우면 폴더의 .gguf 중 가장 큰 파일 자동 선택
+LLM_MODEL_CHOICES = ["qwen3:14b", "qwen3:8b"]  # 시작 시 이 중 설치된 모델을 선택 (16GB → 큰 모델 / 8GB → 작은 모델)
 LLM_OLLAMA_NAME = ""                       # 비우면 시작 시 위 목록에서 선택 (고정하려면 이름 기입 또는 --model 옵션)
                                            # 예: "qwen3:14b" / "qwen3:8b" / "snap2read-llm"(로컬 GGUF)
 LLM_OLLAMA_PORT = 11434                    # Ollama 포트
