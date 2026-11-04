@@ -1,6 +1,5 @@
 cert.pem
 key.pem
-generate_cert.py
 __pycache__/
 uploads/
 PP-OCRv6_*/
