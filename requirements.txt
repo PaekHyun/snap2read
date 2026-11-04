@@ -1,6 +1,6 @@
 fastapi
 uvicorn
 edge-tts
-deep-translator
 pytesseract
 pillow
+pywin32

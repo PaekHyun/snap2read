@@ -3,11 +3,11 @@
 **책 페이지를 사진 찍으면 PC(GPU)가 읽어주는 가정용 AI 리더.**
 Snap. Translate. Read aloud.
 
-폰 웹브라우저 → 사진 업로드 → **PC GPU OCR(PP-OCRv6)** → 원문 표시 → (선택) 번역 표시 → 자연 음성 **스트리밍 재생** → MP3/WAV 다운로드
+폰 웹브라우저 → 사진 업로드 → **PC GPU OCR(PP-OCRv6)** → 원문 표시·**수정 가능** → 자연 음성 **스트리밍 재생** → MP3/WAV 다운로드
 
 - 정확도: PaddleOCR **PP-OCRv6 medium** (50개 언어 단일 인식 모델, 그림 배경 오인식 최소화)
 - 속도: GPU에서 페이지 1장 **0.3~1초** (서버 시작 시 자동 워밍업)
-- 번역: Google 실패/제한 시 **MyMemory로 자동 대체** (무료, 키 불필요)
+- **OCR 결과 수정**: 인식된 텍스트를 화면에서 직접 고치고 `🔁 다시 읽기` → 수정된 문장으로 음성 재생성
 - 음성: edge-tts(자연 음성 MP3) → 실패 시 Windows SAPI(오프라인 WAV) 자동 대체
 
 ---
@@ -133,16 +133,15 @@ powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1 -Remove
 1. **OCR**: 로컬 PP-OCRv6 medium (GPU 자동) → 실패 시 기본 경로 → 실패 시 Tesseract 폴백
    - 서버 시작 시 **워밍업**(가짜 이미지 1회 처리)으로 GPU 첫 구동 지연을 사용자 요청과 분리
    - CPU에서는 oneDNN 비활성화(`enable_mkldnn=False`) — PP-OCRv6 호환성
-2. **번역** (백그라운드 — 읽어주기를 막지 않음):
-   - Google(무료) → `TooManyRequests` 감지 시 **30분 쿨다운** 동안 MyMemory 우선 → 복귀 후 재시도
-   - 둘 다 실패 시 화면에 실패 사유 표시
+2. **수정·다시 읽기**: 완료 후 텍스트 박스에서 직접 수정 → `🔁 다시 읽기`로 새 음성 생성
 3. **TTS**: edge-tts(MP3) → 실패 시 Windows SAPI(WAV) 자동 대체
 
 ## API
 
 | 엔드포인트 | 설명 |
 |-----------|------|
-| `POST /api/process` | 사진 업로드 (`image`, `lang`, `translate`) → `{id}` |
+| `POST /api/process` | 사진 업로드 (`image`, `lang`) → `{id}` |
+| `POST /api/reread/{id}` | 수정된 텍스트로 음성 재생성 (`text`) |
 | `GET /api/status/{id}` | 진행상황/원문/번역/단계별 소요시간 |
 | `GET /api/audio/{id}` | 음성 스트리밍 + 다운로드 |
 | `GET /api/image/{id}` | 업로드된 원본 사진 |
@@ -158,7 +157,7 @@ powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1 -Remove
 | `set_optimization_level` AttributeError | paddleocr 3.7 ↔ paddle 2.x 조합 | paddle을 3.x로 (`pip show paddlepaddle*`로 확인) |
 | `TesseractNotFoundError` | Paddle 경로 실패 후 폴백에서 Tesseract도 없음 | 서버가 Paddle 원인을 함께 출력 — 그 원인부터 해결 |
 | 첫 요청이 느림 (10~20초) | GPU 첫 구동(커널 로딩) | 서버가 시작 시 자동 워밍업 — 완료 후 첫 요청부터 빠름 |
-| `TooManyRequests` (번역) | 구글 무료 엔드포인트 제한(5 req/s, 밴 ~30분) | 자동으로 MyMemory 대체 + 30분 쿨다운. 몇 분 뒤 자동 복귀 |
+| `TooManyRequests` | — (번역 기능은 제거됨) | — |
 | 포트 8000 충돌 (`error 10048`) | 이전 서버 프로세스 생존 | 이전 창 `Ctrl+C` 또는 작업 관리자에서 python 종료 |
 
 ## 구성
@@ -174,6 +173,6 @@ powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1 -Remove
 
 ## 참고
 
-- API 키 불필요. 번역·TTS는 온라인(차단 시 자동 대체), OCR·SAPI는 오프라인 동작.
+- API 키 불필요. TTS는 온라인(실패 시 SAPI 대체), OCR은 오프라인 동작.
 - 모델 폴더(총 ~150MB)는 `.gitignore` 제외 — repo에 커밋하지 않음.
 - 생성 음성·사진은 `uploads/`에 남습니다 — 공용 PC라면 주기적으로 정리하세요.

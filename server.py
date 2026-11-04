@@ -1,5 +1,5 @@
 """snap2read — 사진 찍으면 읽어주는 가정용 AI 리더
-폰 웹브라우저 → 사진 업로드 → OCR → (선택) 번역 → TTS 스트리밍 → MP3 다운로드
+폰 웹브라우저 → 사진 업로드 → OCR → 텍스트 확인/수정 → TTS 스트리밍 → MP3 다운로드
 
 실행:  python server.py   →   http://<PC IP>:8000  (폰과 같은 WiFi)
 """
@@ -217,102 +217,6 @@ def ocr_image(path: str, lang: str) -> str:
         raise RuntimeError(msg)
 
 
-# ---------------------------------------------------------------- 번역
-_TRANS_TARGET = {"kor": "en", "chi_sim": "ko", "jpn": "ko", "rus": "ko",
-                 "vie": "ko", "spa": "ko", "fra": "ko", "deu": "ko", "eng": "ko"}
-_TRANS_SRC = {"eng": "english", "kor": "korean", "chi_sim": "chinese (simplified)",
-              "jpn": "japanese", "rus": "russian", "vie": "vietnamese",
-              "spa": "spanish", "fra": "french", "deu": "german"}
-
-
-def _translate_google(text: str, src: str, tgt: str) -> tuple[str, str]:
-    """구글(무료 엔드포인트) — 4,500자 단위 분할 + 긴 백오프 재시도."""
-    from deep_translator import GoogleTranslator
-    parts, chunk = [], ""
-    for para in text.split("\n\n"):
-        if len(chunk) + len(para) > 4500 and chunk:
-            parts.append(chunk)
-            chunk = para
-        else:
-            chunk = (chunk + "\n\n" + para).strip()
-    if chunk:
-        parts.append(chunk)
-    tr = GoogleTranslator(source=src, target=tgt)
-    out = []
-    for p in parts:
-        last = None
-        for wait in (0, 2, 5, 10):        # 백오프: 즉시→2s→5s→10s (최대 ~17s)
-            if wait:
-                time.sleep(wait)
-            try:
-                out.append(tr.translate(p) or "")
-                last = None
-                break
-            except Exception as e:
-                last = e
-        if last is not None:
-            raise last
-    return "\n\n".join(out), ""
-
-
-_MEM_CODES = {"eng": "en-GB", "kor": "ko-KR", "jpn": "ja-JP",
-              "chi_sim": "zh-CN", "rus": "ru-RU", "vie": "vi-VN",
-              "spa": "es-ES", "fra": "fr-FR", "deu": "de-DE"}
-
-# 구글 제한(TooManyRequests) 밴은 약 30분 지속 — 밴 동안 구글을 건너뛰고
-# 바로 MyMemory를 써서 매 페이지마다 백오프 대기를 없앤다.
-_google_banned_until = 0.0
-_GOOGLE_COOLDOWN = 30 * 60
-
-
-def _translate_mymemory(text: str, lang: str) -> tuple[str, str]:
-    """대체 엔진 MyMemory — 구글이 차단/제한 중일 때 사용 (450자 단위 분할)."""
-    from deep_translator import MyMemoryTranslator
-    tr = MyMemoryTranslator(source=_MEM_CODES.get(lang, "en-GB"),
-                            target=_MEM_CODES.get("kor") if lang != "kor" else "en-GB")
-    # 450자 이하 문장 단위 청크
-    parts, cur = [], ""
-    for line in text.split("\n"):
-        if len(cur) + len(line) > 450 and cur:
-            parts.append(cur)
-            cur = line
-        else:
-            cur = (cur + " " + line).strip()
-    if cur:
-        parts.append(cur)
-    out = [tr.translate(p) or "" for p in parts]
-    return "\n".join(out), ""
-
-
-def translate_text(text: str, lang: str) -> tuple[str, str]:
-    """(번역문, 오류메시지) — 구글 실패/밴 시 MyMemory로 자동 대체."""
-    global _google_banned_until
-    try:
-        tgt = _TRANS_TARGET.get(lang, "ko")
-        if tgt == "ko" and lang not in _TRANS_SRC:
-            return "", ""
-        src = _TRANS_SRC.get(lang, "english")
-        if src == tgt:
-            return text, ""
-        if time.time() >= _google_banned_until:      # 쿨다운 중이 아니면 구글 먼저
-            try:
-                return _translate_google(text, src, tgt)
-            except Exception as e:
-                g_err = f"{type(e).__name__}: {e}"
-                if "TooManyRequests" in g_err:
-                    _google_banned_until = time.time() + _GOOGLE_COOLDOWN
-                    print(f"[translate] 구글 제한 감지 → {int(_GOOGLE_COOLDOWN/60)}분간 "
-                          f"MyMemory 우선 사용. 원인: {g_err[:80]}")
-                else:
-                    print(f"[translate] 구글 실패 → MyMemory 대체 ({g_err})")
-        try:
-            return _translate_mymemory(text, lang)
-        except Exception as e:
-            return "", f"google → MyMemory({type(e).__name__}: {e})"
-    except Exception as e:
-        return "", f"{type(e).__name__}: {e}"
-
-
 # ---------------------------------------------------------------- TTS
 # 언어별 기본 음성 (edge-tts)
 VOICES = {"eng": "en-US-AriaNeural", "kor": "ko-KR-SunHiNeural",
@@ -375,28 +279,9 @@ def tts_sapi(text: str, out_wav: str) -> bool:
 
 
 # ---------------------------------------------------------------- 파이프라인
-def _stage(msg: str):
-    def wrap():
-        pass
-    return wrap
-
-
-async def _bg_translate(job: dict, text: str, lang: str):
-    """번역 백그라운드 실행 — 읽어주기(TTS)를 기다리게 하지 않기 위해 별도 태스크."""
-    try:
-        t0 = time.time()
-        tr, err = await asyncio.get_running_loop().run_in_executor(
-            None, translate_text, text, lang)
-        job["translation"], job["translation_error"] = tr, err
-        job["trans_ms"] = int((time.time() - t0) * 1000)
-        if err:
-            print(f"[translate] 실패: {err}")
-    finally:
-        job["translating"] = False
-
-
-async def _run_job(jid: str, img_path: Path, lang: str, do_translate: bool):
+async def _run_job(jid: str, img_path: Path, lang: str):
     job = JOBS[jid]
+    job["lang"] = lang
     loop = asyncio.get_running_loop()
     t0 = time.time()
     try:
@@ -411,11 +296,7 @@ async def _run_job(jid: str, img_path: Path, lang: str, do_translate: bool):
             job["error"] = "글자를 인식하지 못했습니다. 페이지를 더 밝고 정면으로, 가까이 찍어보세요."
             return
 
-        # 2) 번역을 백그라운드로 시작 → 읽어주기가 번역을 기다리지 않음
-        tr_task = (asyncio.create_task(_bg_translate(job, text, lang))
-                   if do_translate else None)
-
-        # 3) TTS — edge-tts → SAPI 대체
+        # 2) TTS — edge-tts → SAPI 대체
         job["status"] = "tts"
         t_tts = time.time()
         spoken = _clean_for_tts(text)
@@ -434,8 +315,6 @@ async def _run_job(jid: str, img_path: Path, lang: str, do_translate: bool):
         job["status"] = "done"
         job["ms"] = int((time.time() - t0) * 1000)
         job["tts_ms"] = int((time.time() - t_tts) * 1000)
-        if tr_task:
-            await tr_task          # 음성은 이미 재생 중 — 번역 완료까지만 폴링 유지
     except Exception as exc:  # 절대 조용히 죽지 않게
         job["status"] = "error"
         job["error"] = f"{type(exc).__name__}: {exc}"
@@ -444,8 +323,7 @@ async def _run_job(jid: str, img_path: Path, lang: str, do_translate: bool):
 # ---------------------------------------------------------------- API
 @app.post("/api/process")
 async def process(image: UploadFile = File(...),
-                  lang: str = Form("eng"),
-                  translate: str = Form("false")):
+                  lang: str = Form("eng")):
     jid = uuid.uuid4().hex[:12]
     suffix = Path(image.filename or "photo.jpg").suffix or ".jpg"
     img_path = UPLOADS / f"{jid}{suffix}"
@@ -454,13 +332,12 @@ async def process(image: UploadFile = File(...),
         raise HTTPException(400, "빈 이미지입니다.")
     img_path.write_bytes(raw)
 
-    job = {"id": jid, "status": "queued", "text": "", "translation": "",
-           "translation_error": "", "translating": False, "audio": "",
+    job = {"id": jid, "status": "queued", "text": "", "audio": "",
            "audio_ext": "", "error": "", "ms": 0, "ocr_ms": 0, "tts_ms": 0,
-           "trans_ms": 0, "image": img_path.name}
+           "image": img_path.name}
     with _LOCK:
         JOBS[jid] = job
-    task = asyncio.create_task(_run_job(jid, img_path, lang, translate == "true"))
+    task = asyncio.create_task(_run_job(jid, img_path, lang))
     _TASKS.add(task)
     task.add_done_callback(_TASKS.discard)
     return {"id": jid}
@@ -473,6 +350,37 @@ async def status(jid: str):
     if not job:
         raise HTTPException(404, "작업을 찾을 수 없습니다.")
     return job
+
+
+@app.post("/api/reread/{jid}")
+async def reread(jid: str, text: str = Form(...)):
+    """사용자가 수정한 텍스트로 음성을 다시 생성."""
+    with _LOCK:
+        job = JOBS.get(jid)
+    if not job:
+        raise HTTPException(404, "작업을 찾을 수 없습니다.")
+    text = text.strip()
+    if not text:
+        raise HTTPException(400, "빈 텍스트입니다.")
+    job["status"] = "tts"
+    spoken = _clean_for_tts(text)
+    stamp = int(time.time() * 1000)
+    audio = UPLOADS / f"{jid}_r{stamp}.mp3"
+    if await tts_edge(spoken, VOICES.get(job.get("lang", "eng"), VOICES["eng"]),
+                      str(audio)):
+        job["audio"], job["audio_ext"] = audio.name, "mp3"
+    else:
+        wav = UPLOADS / f"{jid}_r{stamp}.wav"
+        ok = await asyncio.get_running_loop().run_in_executor(
+            None, tts_sapi, spoken, str(wav))
+        if not ok:
+            job["status"] = "error"
+            job["error"] = "음성 생성에 실패했습니다."
+            raise HTTPException(500, job["error"])
+        job["audio"], job["audio_ext"] = wav.name, "wav"
+    job["text"] = text
+    job["status"] = "done"
+    return {"id": jid, "audio_ext": job["audio_ext"]}
 
 
 @app.get("/api/audio/{jid}")

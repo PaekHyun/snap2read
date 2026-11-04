@@ -46,8 +46,10 @@
   @keyframes r { to { transform: rotate(360deg); } }
   .err { color: #fca5a5; font-size: 14px; white-space: pre-wrap; }
   .ts { white-space: pre-wrap; line-height: 1.75; font-size: 15.5px; }
-  .ko { color: #a5b4fc; line-height: 1.75; font-size: 14.5px;
-        border-top: 1px dashed #334155; margin-top: 10px; padding-top: 10px; }
+  #edit { width: 100%; min-height: 130px; padding: 10px; border-radius: 10px;
+          border: 1px solid #475569; background: #0b1220; color: #e2e8f0;
+          font: inherit; font-size: 15px; line-height: 1.6; resize: vertical; }
+  .hint { color: #64748b; font-size: 12px; margin-top: 4px; }
   audio { width: 100%; margin-top: 10px; }
   .dl {
     display: inline-block; margin-top: 10px; padding: 10px 16px; border-radius: 10px;
@@ -75,7 +77,6 @@
       <option value="deu">독일어</option>
     </select>
     <div class="row">
-      <span class="chk"><input type="checkbox" id="tr" checked> 번역도 함께 보기</span>
       <span class="chk"><input type="checkbox" id="auto" checked> 완료 시 자동 재생</span>
     </div>
     <button class="big" id="go">📷 사진 찍기 / 선택</button>
@@ -86,8 +87,13 @@
     <div class="status"><span class="spin" id="spin"></span><span id="st">대기 중…</span></div>
     <div class="err" id="err"></div>
     <div class="ts" id="ts"></div>
-    <div class="ko" id="ko" style="display:none"></div>
+    <div id="editbox" style="display:none">
+      <label for="edit">인식 결과 수정 (잘못된 글자를 고치고 다시 읽어주기)</label>
+      <textarea id="edit"></textarea>
+      <div class="hint">수정 후 아래 ‘🔁 다시 읽기’를 누르면 수정된 문장으로 새 음성을 만듭니다.</div>
+    </div>
     <audio id="au" controls preload="none" style="display:none"></audio>
+    <a class="dl" id="rr" style="display:none" download>🔁 다시 읽기</a>
     <a class="dl" id="dl" style="display:none" download>⬇ MP3/WAV 저장</a>
     <div class="ms" id="ms"></div>
   </div>
@@ -103,7 +109,8 @@ $("shot").onchange = async e => {
   const f = e.target.files[0];
   if (!f) return;
   $("out").style.display = "block";
-  $("err").textContent = ""; $("ts").textContent = ""; $("ko").style.display = "none";
+  $("err").textContent = ""; $("ts").textContent = ""; $("edit").value = "";
+  $("editbox").style.display = "none"; $("rr").style.display = "none";
   $("au").style.display = "none"; $("dl").style.display = "none"; $("ms").textContent = "";
   $("spin").style.display = "inline-block"; $("st").textContent = "사진 전송 중…";
   $("go").disabled = true;
@@ -113,7 +120,6 @@ $("shot").onchange = async e => {
     const fd = new FormData();
     fd.append("image", f, "photo.jpg");
     fd.append("lang", $("lang").value);
-    fd.append("translate", $("tr").checked ? "true" : "false");
     const r = await fetch("/api/process", { method: "POST", body: fd });
     if (!r.ok) throw new Error("업로드 실패 (" + r.status + ")");
     const { id } = await r.json();
@@ -127,60 +133,67 @@ $("shot").onchange = async e => {
 };
 
 function poll(id) {
-  const STAGE = { queued:"대기 중…", ocr:"글자 인식 중…", translate:"번역 중…", tts:"목소리 만드는 중…" };
+  const STAGE = { queued:"대기 중…", ocr:"글자 인식 중…", tts:"목소리 만드는 중…" };
+  let curId = id;
   polling = setInterval(async () => {
     try {
       const j = await (await fetch("/api/status/" + id)).json();
       if (j.status === "error") { clearInterval(polling); return fail(j.error || "처리 실패"); }
-      if (!j.translation) { $("ko").style.display = "none"; $("ko").textContent = ""; }
       if (!j.text) $("ts").textContent = "";        // 이전 작업 결과 잔존 방지
       $("st").textContent = STAGE[j.status] || j.status;
       if (j.text)    $("ts").textContent = j.text;
-      if (j.translation) { $("ko").textContent = j.translation; $("ko").style.display = "block"; }
       if (j.status !== "done") return;
       clearInterval(polling);
-      if (j.translating) {                    // 번역이 음성보다 늦으면 대기 표시만
-        $("st").textContent = "번역 중…";
-        $("spin").style.display = "inline-block";
-        polling = setInterval(async () => {
-          try {
-            const j2 = await (await fetch("/api/status/" + id)).json();
-            if (!j2.translating) {
-              clearInterval(polling);
-              $("spin").style.display = "none";
-              $("st").textContent = "완료";
-              if (j2.translation) { $("ko").textContent = j2.translation; }
-              if (j2.translation_error)
-                $("ko").innerHTML = "⚠️ 번역 실패: " + j2.translation_error;
-              $("ko").style.display = "block";
-            }
-          } catch (e) { /* 다음 폴링에서 재시도 */ }
-        }, 1000);
-      } else {
-        $("spin").style.display = "none";
-        if (j.translation_error)
-          $("ko").innerHTML = "⚠️ 번역 실패: " + j.translation_error;
-        $("ko").style.display = "block";
-      }
+      $("spin").style.display = "none";
+      // 수정 UI 활성화 — OCR 결과를 그대로 담아 사용자가 고칠 수 있게
+      $("edit").value = j.text;
+      $("editbox").style.display = "block";
+      $("rr").style.display = "inline-block";
+      $("rr").dataset.job = id;
       const au = $("au"), src = "/api/audio/" + id;
-      au.src = src; au.style.display = "block";   // 재생 플레이어 표시 (이전 커밋에서 누락됐던 복구)
+      au.src = src; au.style.display = "block";
       $("dl").href = src; $("dl").download = "snap2read." + (j.audio_ext || "mp3");
       $("dl").style.display = "inline-block";
-      if (j.translation_error)                      // 번역 실패 사유 표시
-        $("ko").innerHTML = "⚠️ 번역 실패: " + j.translation_error +
-          "<br><small>(번역은 온라인 API 사용 — 잠시 후 재시도 필요할 수 있음)</small>";
-      $("ko").style.display = "block";
-      if (j.text) $("ts").textContent = j.text;     // 최종 스냅샷 확정 반영
+      if (j.text) $("ts").textContent = j.text;
       $("ms").textContent = "⏱ 처리 " + ((j.ms / 1000) || "?") + "초" +
         " (인식 " + (((j.ocr_ms || 0) / 1000) || "?") + "s · 말하기 " +
-        (((j.tts_ms || 0) / 1000) || "?") + "s" +
-        (j.trans_ms ? " · 번역 " + (j.trans_ms / 1000) + "s" : "") + ")" +
+        (((j.tts_ms || 0) / 1000) || "?") + "s)" +
         " · 목소리 " + (LANG_NAME[$("lang").value] || $("lang").value) +
         " · " + (j.audio_ext === "wav" ? "PC 오프라인 음성(SAPI)" : "자연 음성(edge-tts)");
       if ($("auto").checked) au.play().catch(() => {});
     } catch (e) { /* 네트워크 순간 끊김 — 다음 폴링에서 재시도 */ }
   }, 700);
 }
+
+// 수정된 텍스트로 다시 읽어주기
+$("rr").onclick = async () => {
+  const id = $("rr").dataset.job;
+  const text = $("edit").value.trim();
+  if (!id || !text) return;
+  $("rr").disabled = true;
+  $("st").textContent = "수정된 문장으로 다시 만드는 중…";
+  $("spin").style.display = "inline-block";
+  try {
+    const fd = new FormData();
+    fd.append("text", text);
+    const r = await fetch("/api/reread/" + id, { method: "POST", body: fd });
+    if (!r.ok) throw new Error("다시 읽기 실패 (" + r.status + ")");
+    const j = await r.json();
+    $("st").textContent = "완료";
+    $("spin").style.display = "none";
+    $("ts").textContent = text;
+    const src = "/api/audio/" + id + "?v=" + Date.now();
+    $("au").src = src; $("au").style.display = "block";
+    $("dl").href = src; $("dl").download = "snap2read_fixed." + (j.audio_ext || "mp3");
+    $("dl").style.display = "inline-block";
+    $("ms").textContent = "🔁 수정 반영 완료 · " + (j.audio_ext === "wav" ? "PC 오프라인 음성(SAPI)" : "자연 음성(edge-tts)");
+    $("au").play().catch(() => {});
+  } catch (e) {
+    fail(e.message);
+  } finally {
+    $("rr").disabled = false;
+  }
+};
 
 function fail(msg) {
   if (polling) clearInterval(polling);
