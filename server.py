@@ -452,17 +452,28 @@ def _llm_translate_stream(text: str, lang: str):
     prompt = (f"/no_think 다음 텍스트를 {target}로 번역하세요. "
               f"번역문만 출력하고 설명·사고과정은 출력하지 마세요.\n\n"
               f"{text}\n\n{target} 번역:")
-    # /api/chat + think:false — Ollama 공식 경로 (템플릿 enable_thinking=false)
+    # /api/chat + think:false — Ollama 공식 경로. 다만 모델이 think를 지원하지
+    # 않으면 Ollama가 500을 돌려주므로, 실패하면 think 키를 빼고 한 번 재시도.
     req = {"model": LLM_OLLAMA_NAME,
            "messages": [{"role": "user", "content": prompt}],
            "stream": True,
            "think": False,
            "keep_alive": LLM_KEEP_ALIVE,
            "options": {"temperature": 0.2, "num_ctx": 4096, "num_predict": 1200}}
-    with requests.post(f"{_ollama_url()}/api/chat", json=req,
-                       stream=True, timeout=600) as r:
+    def _post(payload):
+        return requests.post(f"{_ollama_url()}/api/chat", json=payload,
+                             stream=True, timeout=600)
+    try:
+        r = _post(req)
+        if r.status_code == 500:
+            r.close()
+            print("[llm] /api/chat 500 — think 옵션 미지원 모델로 보임, think 키 제거 재시도")
+            req.pop("think", None)
+            r = _post(req)
         r.raise_for_status()
-
+    except requests.exceptions.RequestException as e:
+        raise RuntimeError(f"Ollama 호출 실패: {type(e).__name__}: {e}")
+    with r:
         def chunks():
             for line in r.iter_lines():
                 if not line:
