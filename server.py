@@ -1,7 +1,7 @@
 """snap2read — 사진 찍으면 읽어주는 가정용 AI 리더
 폰 웹브라우저 → 사진 업로드 → OCR → 텍스트 확인/수정 → TTS 스트리밍 → MP3 다운로드
 
-실행:  python server.py   →   http://<PC IP>:8000  (폰과 같은 WiFi)
+실행:  python server.py   →   http(s)://<PC IP>:9000  (폰과 같은 WiFi, 기본 포트 9000)
 """
 import asyncio
 import json
@@ -24,10 +24,10 @@ BASE = Path(__file__).resolve().parent
 UPLOADS = BASE / "uploads"
 UPLOADS.mkdir(exist_ok=True)
 
+PORT = 9000                                 # 서버 포트 (방화벽 허용 필요)
 # ===== LLM 번역 설정 — 바꿀 값은 이 블록에서만 수정하세요 =====
 LLM_MODEL_DIR = BASE / "Qwen3.5-9B-GGUF"   # 로컬 GGUF 폴더 (상대경로 ./Qwen3.5-9B-GGUF)
 LLM_MODEL_FILE = ""                        # 비우면 폴더의 .gguf 중 가장 큰 파일 자동 선택
-LLM_MODEL_CHOICES = ["qwen3:14b", "qwen3:8b"]  # 시작 시 이 중 설치된 모델을 선택 (16GB → 큰 모델 / 8GB → 작은 모델)
 LLM_OLLAMA_NAME = ""                       # 비우면 시작 시 위 목록에서 선택 (고정하려면 이름 기입 또는 --model 옵션)
                                            # 예: "qwen3:14b" / "qwen3:8b" / "snap2read-llm"(로컬 GGUF)
 LLM_OLLAMA_PORT = 11434                    # Ollama 포트
@@ -768,12 +768,12 @@ if __name__ == "__main__":
         print("[llm] 비활성 (--llm false)")
 
     # HTTPS (자체서명 인증서) — 모바일 브라우저가 http를 https로 강제 전환하는 경우 대응.
-    # cert.pem/key.pem이 있으면 https://...:8000으로 접속 가능. 없으면 http로 계속 서비스.
+    # cert.pem/key.pem이 있으면 https://...:$PORT(9000)로 접속 가능. 없으면 http로 계속 서비스.
     cert, key = BASE / "cert.pem", BASE / "key.pem"
     ssl_args = {"ssl_certfile": str(cert), "ssl_keyfile": str(key)} if cert.exists() and key.exists() else None
     if ssl_args:
-        print("HTTPS 인증서 사용 — 폰에서는 https://<PC IP>:8000 접속 (첫 접속 경고 1회 수락)")
-    print(f"snap2read 서버 시작 → {'https' if ssl_args else 'http'}://0.0.0.0:8000  (폰에서는 PC의 IP 사용)")
+        print(f"HTTPS 인증서 사용 — 폰에서는 https://<PC IP>:{PORT} 접속 (첫 접속 경고 1회 수락)")
+    print(f"snap2read 서버 시작 → {'https' if ssl_args else 'http'}://0.0.0.0:{PORT}  (폰에서는 PC의 IP 사용)")
     # Ctrl+C가 즉시 안 먹히던 원인: 번역 스트리밍 등 열린 연결을 uvicorn이 기다림.
     # graceful timeout 5초 — 구버전 uvicorn이면 옵션 생략.
     import inspect
@@ -781,7 +781,7 @@ if __name__ == "__main__":
     if "timeout_graceful_shutdown" in inspect.signature(uvicorn.run).parameters:
         run_kwargs["timeout_graceful_shutdown"] = 5
     try:
-        uvicorn.run(app, host="0.0.0.0", port=8000, **run_kwargs, **(ssl_args or {}))
+        uvicorn.run(app, host="0.0.0.0", port=PORT, **run_kwargs, **(ssl_args or {}))
     except KeyboardInterrupt:
         pass
     finally:
