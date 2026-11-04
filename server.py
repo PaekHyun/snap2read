@@ -28,7 +28,7 @@ LLM_MODEL_DIR = BASE / "Qwen3.5-9B-GGUF"   # 로컬 GGUF 폴더 (상대경로 ./
 LLM_MODEL_FILE = ""                        # 비우면 폴더의 .gguf 중 가장 큰 파일 자동 선택
 LLM_OLLAMA_NAME = "snap2read-llm"          # Ollama에 등록될 모델 이름
 LLM_OLLAMA_PORT = 11434                    # Ollama 포트
-LLM_TRANSLATE_TARGET = {"kor": "영어"}      # 책 언어 → 번역 목표 언어 (없으면 한국어)
+LLM_TRANSLATE_TARGET = {"eng": "한국어", "kor": "영어"}   # 책 언어 → 번역 목표 언어 (없으면 한국어)
 LLM_KEEP_ALIVE = "12h"                     # 모델 GPU 상주 시간
 # ============================================================
 
@@ -392,32 +392,95 @@ def _release_llm():
         OLLAMA_PROC = None
 
 
+def _strip_think_stream(chunks):
+    """응답 스트림에서 <think ...>...</think 사고 블록을 제거 (청크 경계 잘림 대응).
+    Qwen 계열은 think 옵션이 무시되면 사고를 본문에 <think 태그로 섞어 출력한다."""
+    buf = ""
+    in_think = False
+    need_strip_head = False
+    emitted = False
+    for chunk in chunks:
+        buf += chunk
+        out = []
+        while buf:
+            if in_think:
+                i = buf.find("</think")
+                if i == -1:
+                    buf = buf[-8:]              # 닫는 태그 경계 대비 꼬리만 보존, 나머지 폐기
+                    break
+                buf = buf[i + 8:]
+                in_think = False
+                need_strip_head = True          # 사고 직후 잔여 '>'·빈 줄 제거
+                continue
+            i = buf.find("<think")
+            if i == -1:
+                if len(buf) > 8:
+                    out.append(buf[:-8])
+                    buf = buf[-8:]
+                break
+            out.append(buf[:i])
+            rest = buf[i + 6:]
+            j = rest.find(">")
+            if j == -1:
+                in_think = True
+                buf = ""
+                break
+            buf = rest[j + 1:]
+            in_think = True
+        text = "".join(out)
+        if need_strip_head:
+            text = text.lstrip(">\n\r\t ")
+            if text:
+                need_strip_head = False
+        if text:
+            emitted = True
+            yield text
+    if buf and not in_think:
+        text = buf.lstrip(">\n\r\t ") if need_strip_head else buf
+        if text:
+            emitted = True
+            yield text
+    if not emitted:
+        yield "(번역 실패: 모델이 사고 모드로만 응답했습니다 — 서버 로그를 확인하세요)"
+
+
 def _llm_translate_stream(text: str, lang: str):
     target = LLM_TRANSLATE_TARGET.get(lang, "한국어")
-    # Qwen3 계열 추론(thinking) 모드 끄기 — 번역은 즉답이 맞음.
-    # /no_think: 프롬프트 단 스위치 / think:false: Ollama 공식 옵션 (둘 다 적용)
-    prompt = (f"/no_think 다음 텍스트를 {target}으로 번역하세요. "
-              f"번역문만 출력하고 설명은 하지 마세요.\n\n{text}")
-    req = {"model": LLM_OLLAMA_NAME, "prompt": prompt, "stream": True,
+    # /no_think: Qwen 계열 프롬프트 스위치 / 마지막 "{target} 번역:" 큐로 출력 언어 고정.
+    # 그래도 사고가 본문에 섞여 나오면 _strip_think_stream가 걷어내고,
+    # num_predict 상한으로 무한 생성(사고 무한 출력)을 차단한다.
+    prompt = (f"/no_think 다음 텍스트를 {target}로 번역하세요. "
+              f"번역문만 출력하고 설명·사고과정은 출력하지 마세요.\n\n"
+              f"{text}\n\n{target} 번역:")
+    # /api/chat + think:false — Ollama 공식 경로 (템플릿 enable_thinking=false)
+    req = {"model": LLM_OLLAMA_NAME,
+           "messages": [{"role": "user", "content": prompt}],
+           "stream": True,
            "think": False,
            "keep_alive": LLM_KEEP_ALIVE,
-           "options": {"temperature": 0.2, "num_ctx": 4096}}
-    with requests.post(f"{_ollama_url()}/api/generate", json=req,
+           "options": {"temperature": 0.2, "num_ctx": 4096, "num_predict": 1200}}
+    with requests.post(f"{_ollama_url()}/api/chat", json=req,
                        stream=True, timeout=600) as r:
         r.raise_for_status()
-        for line in r.iter_lines():
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if data.get("thinking"):
-                continue                    # 혹시 남은 사고 토큰은 화면에 안 보이게 폐기
-            if data.get("response"):
-                yield data["response"]
-            if data.get("done"):
-                break
+
+        def chunks():
+            for line in r.iter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                msg = data.get("message") or {}
+                if data.get("thinking") or msg.get("thinking"):
+                    continue                    # thinking 필드로 분리된 사고 토큰 폐기
+                content = msg.get("content")
+                if content:
+                    yield content
+                if data.get("done"):
+                    break
+
+        yield from _strip_think_stream(chunks())
 
 
 # ---------------------------------------------------------------- 파이프라인
@@ -608,8 +671,16 @@ if __name__ == "__main__":
     if ssl_args:
         print("HTTPS 인증서 사용 — 폰에서는 https://<PC IP>:8000 접속 (첫 접속 경고 1회 수락)")
     print(f"snap2read 서버 시작 → {'https' if ssl_args else 'http'}://0.0.0.0:8000  (폰에서는 PC의 IP 사용)")
+    # Ctrl+C가 즉시 안 먹히던 원인: 번역 스트리밍 등 열린 연결을 uvicorn이 기다림.
+    # graceful timeout 5초 — 구버전 uvicorn이면 옵션 생략.
+    import inspect
+    run_kwargs = {}
+    if "timeout_graceful_shutdown" in inspect.signature(uvicorn.run).parameters:
+        run_kwargs["timeout_graceful_shutdown"] = 5
     try:
-        uvicorn.run(app, host="0.0.0.0", port=8000, **(ssl_args or {}))
+        uvicorn.run(app, host="0.0.0.0", port=8000, **run_kwargs, **(ssl_args or {}))
+    except KeyboardInterrupt:
+        pass
     finally:
         _release_llm()   # Ctrl+C 종료 시 — 모델 VRAM 언로드 + 서버가 띄운 Ollama 정리
 
