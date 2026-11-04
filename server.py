@@ -26,7 +26,9 @@ UPLOADS.mkdir(exist_ok=True)
 # ===== LLM 번역 설정 — 바꿀 값은 이 블록에서만 수정하세요 =====
 LLM_MODEL_DIR = BASE / "Qwen3.5-9B-GGUF"   # 로컬 GGUF 폴더 (상대경로 ./Qwen3.5-9B-GGUF)
 LLM_MODEL_FILE = ""                        # 비우면 폴더의 .gguf 중 가장 큰 파일 자동 선택
-LLM_OLLAMA_NAME = "snap2read-llm"          # Ollama에 등록될 모델 이름
+LLM_OLLAMA_NAME = "qwen3:8b"               # Ollama 모델 이름
+                                           # 공식 모델(권장): "qwen3:8b" — 'ollama pull qwen3:8b' 1회 필요
+                                           # 로컬 GGUF:      "snap2read-llm" — ./Qwen3.5-9B-GGUF의 GGUF 사용
 LLM_OLLAMA_PORT = 11434                    # Ollama 포트
 LLM_TRANSLATE_TARGET = {"eng": "한국어", "kor": "영어"}   # 책 언어 → 번역 목표 언어 (없으면 한국어)
 LLM_KEEP_ALIVE = "12h"                     # 모델 GPU 상주 시간
@@ -337,7 +339,17 @@ def _ensure_ollama():
                 print(f"[llm] 비활성: {LLM_REASON}")
                 return
         tags = requests.get(f"{_ollama_url()}/api/tags", timeout=5).json().get("models", [])
-        if not any(m.get("name", "").split(":")[0] == LLM_OLLAMA_NAME for m in tags):
+        have = [m.get("name", "") for m in tags]
+        if ":" in LLM_OLLAMA_NAME:
+            # 공식 모델(qwen3:8b 등) — 로컬 GGUF 등록 건너뛰고 pull 여부만 확인
+            if not any(n == LLM_OLLAMA_NAME or n.split(":")[0] == LLM_OLLAMA_NAME.split(":")[0]
+                       for n in have):
+                LLM_REASON = (f"모델 '{LLM_OLLAMA_NAME}' 없음 — "
+                              f"터미널에서 'ollama pull {LLM_OLLAMA_NAME}' 실행 후 재시작")
+                print(f"[llm] 비활성: {LLM_REASON}")
+                return
+            print(f"[llm] 공식 모델 사용: {LLM_OLLAMA_NAME} (think 토글 지원)")
+        elif not any(n.split(":")[0] == LLM_OLLAMA_NAME for n in have):
             gguf = _pick_gguf()
             if not gguf:
                 LLM_REASON = f"GGUF 파일이 없습니다: {LLM_MODEL_DIR}"
