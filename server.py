@@ -4,21 +4,33 @@
 실행:  python server.py   →   http://<PC IP>:8000  (폰과 같은 WiFi)
 """
 import asyncio
+import json
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 import uuid
 from pathlib import Path
 
+import requests
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE = Path(__file__).resolve().parent
 UPLOADS = BASE / "uploads"
 UPLOADS.mkdir(exist_ok=True)
+
+# ===== LLM 번역 설정 — 바꿀 값은 이 블록에서만 수정하세요 =====
+LLM_MODEL_DIR = BASE / "Qwen3.5-9B-GGUF"   # 로컬 GGUF 폴더 (상대경로 ./Qwen3.5-9B-GGUF)
+LLM_MODEL_FILE = ""                        # 비우면 폴더의 .gguf 중 가장 큰 파일 자동 선택
+LLM_OLLAMA_NAME = "snap2read-llm"          # Ollama에 등록될 모델 이름
+LLM_OLLAMA_PORT = 11434                    # Ollama 포트
+LLM_TRANSLATE_TARGET = {"kor": "영어"}      # 책 언어 → 번역 목표 언어 (없으면 한국어)
+LLM_KEEP_ALIVE = "12h"                     # 모델 GPU 상주 시간
+# ============================================================
 
 # 로컬 모델 폴더 (프로젝트 안에 직접 넣어둔 경우 우선 사용 — 자동 다운로드 생략)
 # 필수: det/rec 2개 / 선택: 방향 판별 2개 (있으면 네트워크 의존성 완전 제거)
@@ -278,6 +290,98 @@ def tts_sapi(text: str, out_wav: str) -> bool:
         return False
 
 
+# ---------------------------------------------------------------- LLM 번역 (Ollama)
+LLM_READY = threading.Event()
+LLM_REASON = "초기화 중…"
+_CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
+
+
+def _ollama_url() -> str:
+    return f"http://127.0.0.1:{LLM_OLLAMA_PORT}"
+
+
+def _pick_gguf():
+    if LLM_MODEL_FILE:
+        p = LLM_MODEL_DIR / LLM_MODEL_FILE
+        return p if p.exists() else None
+    if not LLM_MODEL_DIR.is_dir():
+        return None
+    cands = sorted(LLM_MODEL_DIR.glob("*.gguf"), key=lambda p: p.stat().st_size, reverse=True)
+    return cands[0] if cands else None
+
+
+def _ollama_alive(timeout: float = 3) -> bool:
+    try:
+        requests.get(f"{_ollama_url()}/api/version", timeout=timeout)
+        return True
+    except Exception:
+        return False
+
+
+def _ensure_ollama():
+    """Ollama 기동 → 로컬 GGUF 등록(필요시) → 워밍업. 어떤 실패에도 서버는 계속 됩니다."""
+    global LLM_REASON
+    try:
+        if not _ollama_alive():
+            print("[llm] Ollama 기동 중… (ollama serve)")
+            subprocess.Popen(["ollama", "serve"], creationflags=_CREATE_NO_WINDOW,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            for _ in range(30):                    # 최대 15초
+                if _ollama_alive():
+                    break
+                time.sleep(0.5)
+            if not _ollama_alive():
+                LLM_REASON = "Ollama를 찾거나 시작할 수 없습니다 — ollama.com 에서 설치하세요"
+                print(f"[llm] 비활성: {LLM_REASON}")
+                return
+        tags = requests.get(f"{_ollama_url()}/api/tags", timeout=5).json().get("models", [])
+        if not any(m.get("name", "").split(":")[0] == LLM_OLLAMA_NAME for m in tags):
+            gguf = _pick_gguf()
+            if not gguf:
+                LLM_REASON = f"GGUF 파일이 없습니다: {LLM_MODEL_DIR}"
+                print(f"[llm] 비활성: {LLM_REASON}")
+                return
+            print(f"[llm] 모델 등록 중: {gguf.name} → {LLM_OLLAMA_NAME} (수 분 소요 가능)")
+            mf = LLM_MODEL_DIR / "Modelfile.snap2read"
+            mf.write_text(f"FROM {gguf}\nPARAMETER num_ctx 4096\n", encoding="utf-8")
+            p = subprocess.run(["ollama", "create", LLM_OLLAMA_NAME, "-f", str(mf)],
+                               capture_output=True, timeout=1800)
+            if p.returncode != 0:
+                LLM_REASON = "ollama create 실패: " + p.stderr.decode(errors="replace")[-200:]
+                print(f"[llm] 비활성: {LLM_REASON}")
+                return
+        print("[llm] 모델 워밍업 중… (첫 추론 — GPU 가중치 적재, 수십 초)")
+        requests.post(f"{_ollama_url()}/api/generate",
+                      json={"model": LLM_OLLAMA_NAME, "prompt": "hi", "stream": False,
+                            "keep_alive": LLM_KEEP_ALIVE, "options": {"num_predict": 1}},
+                      timeout=600)
+        LLM_READY.set()
+        LLM_REASON = ""
+        print(f"[llm] 준비 완료 → 번역 버튼 사용 가능 ({LLM_OLLAMA_NAME})")
+    except Exception as e:
+        LLM_REASON = f"{type(e).__name__}: {e}"
+        print(f"[llm] 비활성: {LLM_REASON}")
+
+
+def _llm_translate_stream(text: str, lang: str):
+    target = LLM_TRANSLATE_TARGET.get(lang, "한국어")
+    prompt = (f"다음 텍스트를 {target}으로 번역하세요. "
+              f"번역문만 출력하고 설명은 하지 마세요.\n\n{text}")
+    req = {"model": LLM_OLLAMA_NAME, "prompt": prompt, "stream": True,
+           "keep_alive": LLM_KEEP_ALIVE, "options": {"temperature": 0.2, "num_ctx": 4096}}
+    with requests.post(f"{_ollama_url()}/api/generate", json=req,
+                       stream=True, timeout=600) as r:
+        r.raise_for_status()
+        for line in r.iter_lines():
+            if not line:
+                continue
+            data = json.loads(line)
+            if data.get("response"):
+                yield data["response"]
+            if data.get("done"):
+                break
+
+
 # ---------------------------------------------------------------- 파이프라인
 async def _run_job(jid: str, img_path: Path, lang: str):
     job = JOBS[jid]
@@ -350,6 +454,22 @@ async def status(jid: str):
     if not job:
         raise HTTPException(404, "작업을 찾을 수 없습니다.")
     return job
+
+
+@app.post("/api/translate/{jid}")
+def api_translate(jid: str, text: str = Form(...)):
+    """로컬 LLM(Ollama)으로 번역 — 스트리밍 응답 (폰 UI에 실시간 표시)."""
+    with _LOCK:
+        job = JOBS.get(jid)
+    if not job:
+        raise HTTPException(404, "작업을 찾을 수 없습니다.")
+    text = text.strip()
+    if not text:
+        raise HTTPException(400, "빈 텍스트입니다.")
+    if not LLM_READY.is_set():
+        raise HTTPException(503, f"LLM 번역 사용 불가: {LLM_REASON or '준비 중입니다 — 1~2분 후 다시 시도'}")
+    return StreamingResponse(_llm_translate_stream(text, job.get("lang", "eng")),
+                             media_type="text/plain; charset=utf-8")
 
 
 @app.post("/api/reread/{jid}")
@@ -428,12 +548,27 @@ def _warmup_paddle():
 
 
 if __name__ == "__main__":
+    import argparse
     import uvicorn
+
+    ap = argparse.ArgumentParser(description="snap2read 서버")
+    ap.add_argument("--llm", default="true", choices=["true", "false"],
+                    help="LLM 번역 사용 (기본 true — Ollama 자동 기동·로컬 GGUF 등록·워밍업)")
+    args = ap.parse_args()
+
     threading.Thread(target=_warmup_paddle, daemon=True).start()
+    if args.llm == "true":
+        threading.Thread(target=_ensure_ollama, daemon=True).start()
+    else:
+        LLM_REASON = "실행 옵션으로 비활성화됨 (--llm false)"
+        print("[llm] 비활성 (--llm false)")
 
     # HTTPS (자체서명 인증서) — 모바일 브라우저가 http를 https로 강제 전환하는 경우 대응.
     # cert.pem/key.pem이 있으면 https://...:8000으로 접속 가능. 없으면 http로 계속 서비스.
     cert, key = BASE / "cert.pem", BASE / "key.pem"
     ssl_args = {"ssl_certfile": str(cert), "ssl_keyfile": str(key)} if cert.exists() and key.exists() else None
+    if ssl_args:
+        print("HTTPS 인증서 사용 — 폰에서는 https://<PC IP>:8000 접속 (첫 접속 경고 1회 수락)")
     print(f"snap2read 서버 시작 → {'https' if ssl_args else 'http'}://0.0.0.0:8000  (폰에서는 PC의 IP 사용)")
     uvicorn.run(app, host="0.0.0.0", port=8000, **(ssl_args or {}))
+

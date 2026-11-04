@@ -46,6 +46,8 @@
   @keyframes r { to { transform: rotate(360deg); } }
   .err { color: #fca5a5; font-size: 14px; white-space: pre-wrap; }
   .ts { white-space: pre-wrap; line-height: 1.75; font-size: 15.5px; }
+  .ko { color: #a5b4fc; line-height: 1.75; font-size: 14.5px;
+        border-top: 1px dashed #334155; margin-top: 10px; padding-top: 10px; }
   #edit { width: 100%; min-height: 130px; padding: 10px; border-radius: 10px;
           border: 1px solid #475569; background: #0b1220; color: #e2e8f0;
           font: inherit; font-size: 15px; line-height: 1.6; resize: vertical; }
@@ -87,6 +89,7 @@
     <div class="status"><span class="spin" id="spin"></span><span id="st">대기 중…</span></div>
     <div class="err" id="err"></div>
     <div class="ts" id="ts"></div>
+    <div class="ko" id="ko" style="display:none"></div>
     <div id="editbox" style="display:none">
       <label for="edit">인식 결과 수정 (잘못된 글자를 고치고 다시 읽어주기)</label>
       <textarea id="edit"></textarea>
@@ -94,6 +97,7 @@
     </div>
     <audio id="au" controls preload="none" style="display:none"></audio>
     <a class="dl" id="rr" style="display:none" download>🔁 다시 읽기</a>
+    <a class="dl" id="tl" style="display:none">🌐 번역</a>
     <a class="dl" id="dl" style="display:none" download>⬇ MP3/WAV 저장</a>
     <div class="ms" id="ms"></div>
   </div>
@@ -149,7 +153,8 @@ function poll(id) {
       $("edit").value = j.text;
       $("editbox").style.display = "block";
       $("rr").style.display = "inline-block";
-      $("rr").dataset.job = id;
+      $("tl").style.display = "inline-block";      // LLM 번역 버튼 (서버가 준비됐을 때만 눌림)
+      $("rr").dataset.job = id; $("tl").dataset.job = id;
       const au = $("au"), src = "/api/audio/" + id;
       au.src = src; au.style.display = "block";
       $("dl").href = src; $("dl").download = "snap2read." + (j.audio_ext || "mp3");
@@ -164,6 +169,37 @@ function poll(id) {
     } catch (e) { /* 네트워크 순간 끊김 — 다음 폴링에서 재시도 */ }
   }, 700);
 }
+
+// LLM 번역 — 스트리밍으로 번역 칸에 실시간 표시 (수정된 텍스트 기준)
+$("tl").onclick = async () => {
+  const id = $("tl").dataset.job;
+  const text = ($("edit").value || $("ts").textContent).trim();
+  if (!id || !text) return;
+  $("tl").style.opacity = ".5";
+  const ko = $("ko");
+  ko.style.display = "block"; ko.textContent = "";
+  try {
+    const fd = new FormData();
+    fd.append("text", text);
+    const r = await fetch("/api/translate/" + id, { method: "POST", body: fd });
+    if (!r.ok) {
+      const msg = await r.text();
+      ko.textContent = "⚠️ " + (msg || "번역 실패");
+      return;
+    }
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      ko.textContent += dec.decode(value, { stream: true });
+    }
+  } catch (e) {
+    ko.textContent = "⚠️ 번역 중단: " + e.message;
+  } finally {
+    $("tl").style.opacity = "";
+  }
+};
 
 // 수정된 텍스트로 다시 읽어주기
 $("rr").onclick = async () => {
