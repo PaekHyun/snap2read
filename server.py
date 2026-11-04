@@ -462,7 +462,8 @@ def _llm_translate_stream(text: str, lang: str):
     # 그래도 사고가 본문에 섞여 나오면 _strip_think_stream가 걷어내고,
     # num_predict 상한으로 무한 생성(사고 무한 출력)을 차단한다.
     prompt = (f"/no_think 다음 텍스트를 {target}로 번역하세요. "
-              f"번역문만 출력하고 설명·사고과정은 출력하지 마세요.\n\n"
+              f"규칙: 아동 도서 번역체로 자연스럽게. 인물을 지칭할 때는 그, 그녀 대신 이름을 "
+              f"사용해도 자연스러우면 이름으로. 번역문만 출력하고 설명·사고과정은 출력하지 마세요.\n\n"
               f"{text}\n\n{target} 번역:")
     # /api/chat + think:false — Ollama 공식 경로. 다만 모델이 think를 지원하지
     # 않으면 Ollama가 500을 돌려주므로, 실패하면 think 키를 빼고 한 번 재시도.
