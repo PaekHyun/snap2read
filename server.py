@@ -293,6 +293,7 @@ def tts_sapi(text: str, out_wav: str) -> bool:
 # ---------------------------------------------------------------- LLM 번역 (Ollama)
 LLM_READY = threading.Event()
 LLM_REASON = "초기화 중…"
+OLLAMA_PROC = None                      # 서버가 직접 기동한 Ollama 프로세스 (종료 시 정리 대상)
 _CREATE_NO_WINDOW = 0x08000000 if os.name == "nt" else 0
 
 
@@ -320,12 +321,13 @@ def _ollama_alive(timeout: float = 3) -> bool:
 
 def _ensure_ollama():
     """Ollama 기동 → 로컬 GGUF 등록(필요시) → 워밍업. 어떤 실패에도 서버는 계속 됩니다."""
-    global LLM_REASON
+    global LLM_REASON, OLLAMA_PROC
     try:
         if not _ollama_alive():
             print("[llm] Ollama 기동 중… (ollama serve)")
-            subprocess.Popen(["ollama", "serve"], creationflags=_CREATE_NO_WINDOW,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            OLLAMA_PROC = subprocess.Popen(
+                ["ollama", "serve"], creationflags=_CREATE_NO_WINDOW,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             for _ in range(30):                    # 최대 15초
                 if _ollama_alive():
                     break
@@ -361,6 +363,33 @@ def _ensure_ollama():
     except Exception as e:
         LLM_REASON = f"{type(e).__name__}: {e}"
         print(f"[llm] 비활성: {LLM_REASON}")
+
+
+def _release_llm():
+    """서버 종료 시 LLM 정리 — 모델을 VRAM에서 즉시 언로드(keep_alive:0),
+    서버가 직접 기동한 Ollama 프로세스만 종료 (사용자가 미리 켜둔 것은 유지)."""
+    global OLLAMA_PROC
+    if not (_ollama_alive() or OLLAMA_PROC):
+        return                            # LLM 미사용(--llm false 등) — 할 일 없음
+    try:
+        loaded = [m.get("name", "") for m in
+                  requests.get(f"{_ollama_url()}/api/ps", timeout=5).json().get("models", [])]
+        if any(n == LLM_OLLAMA_NAME or n.split(":")[0] == LLM_OLLAMA_NAME for n in loaded):
+            requests.post(f"{_ollama_url()}/api/generate",
+                          json={"model": LLM_OLLAMA_NAME, "prompt": "", "keep_alive": 0},
+                          timeout=15)
+            print("[llm] 모델 언로드 완료 — VRAM 해제")
+        else:
+            print("[llm] 로드된 모델 없음 — 언로드 불필요")
+    except Exception:
+        pass                              # 정리 실패가 종료를 막지 않게
+    if OLLAMA_PROC is not None:
+        try:
+            OLLAMA_PROC.terminate()
+            print("[llm] Ollama(서버가 기동한 프로세스) 종료")
+        except Exception:
+            pass
+        OLLAMA_PROC = None
 
 
 def _llm_translate_stream(text: str, lang: str):
@@ -570,5 +599,8 @@ if __name__ == "__main__":
     if ssl_args:
         print("HTTPS 인증서 사용 — 폰에서는 https://<PC IP>:8000 접속 (첫 접속 경고 1회 수락)")
     print(f"snap2read 서버 시작 → {'https' if ssl_args else 'http'}://0.0.0.0:8000  (폰에서는 PC의 IP 사용)")
-    uvicorn.run(app, host="0.0.0.0", port=8000, **(ssl_args or {}))
+    try:
+        uvicorn.run(app, host="0.0.0.0", port=8000, **(ssl_args or {}))
+    finally:
+        _release_llm()   # Ctrl+C 종료 시 — 모델 VRAM 언로드 + 서버가 띄운 Ollama 정리
 
