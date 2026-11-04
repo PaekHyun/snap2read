@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time
 import uuid
@@ -26,9 +27,9 @@ UPLOADS.mkdir(exist_ok=True)
 # ===== LLM 번역 설정 — 바꿀 값은 이 블록에서만 수정하세요 =====
 LLM_MODEL_DIR = BASE / "Qwen3.5-9B-GGUF"   # 로컬 GGUF 폴더 (상대경로 ./Qwen3.5-9B-GGUF)
 LLM_MODEL_FILE = ""                        # 비우면 폴더의 .gguf 중 가장 큰 파일 자동 선택
-LLM_OLLAMA_NAME = "qwen3:8b"               # Ollama 모델 이름
-                                           # 공식 모델(권장): "qwen3:8b" — 'ollama pull qwen3:8b' 1회 필요
-                                           # 로컬 GGUF:      "snap2read-llm" — ./Qwen3.5-9B-GGUF의 GGUF 사용
+LLM_MODEL_CHOICES = ["qwen3:14b", "qwen3:8b"]  # 시작 시 이 중 설치된 모델을 선택 (16GB → 큰 모델 / 8GB → 작은 모델)
+LLM_OLLAMA_NAME = ""                       # 비우면 시작 시 위 목록에서 선택 (고정하려면 이름 기입 또는 --model 옵션)
+                                           # 예: "qwen3:14b" / "qwen3:8b" / "snap2read-llm"(로컬 GGUF)
 LLM_OLLAMA_PORT = 11434                    # Ollama 포트
 LLM_TRANSLATE_TARGET = {"eng": "한국어", "kor": "영어"}   # 책 언어 → 번역 목표 언어 (없으면 한국어)
 LLM_KEEP_ALIVE = "12h"                     # 모델 GPU 상주 시간
@@ -321,9 +322,80 @@ def _ollama_alive(timeout: float = 3) -> bool:
         return False
 
 
+def _detect_vram_gb():
+    """nvidia-smi로 GPU 총 VRAM(GB) 확인 — 실패 시 0."""
+    try:
+        p = subprocess.run(["nvidia-smi", "--query-gpu=memory.total",
+                            "--format=csv,noheader,nounits"],
+                           capture_output=True, timeout=10)
+        return max(int(l.strip()) for l in p.stdout.decode("utf-8", "replace").splitlines() if l.strip()) / 1024
+    except Exception:
+        return 0.0
+
+
+def _choose_model(have, tags):
+    """LLM_MODEL_CHOICES 중 설치된 모델 선택 — 콘솔이면 번호로 고르고, 아니면 첫 번째.
+    반환: 모델 이름 / 실패 시 "" (사유는 LLM_REASON에 설정)"""
+    global LLM_REASON
+
+    def avail(name):
+        return any(n == name or n.split(":")[0] == name.split(":")[0] for n in have)
+
+    if LLM_OLLAMA_NAME:                       # --model 옵션 등으로 고정된 경우
+        if avail(LLM_OLLAMA_NAME):
+            print(f"[llm] 고정 모델 사용: {LLM_OLLAMA_NAME}")
+            return LLM_OLLAMA_NAME
+        LLM_REASON = (f"모델 '{LLM_OLLAMA_NAME}' 없음 — "
+                      f"'ollama pull {LLM_OLLAMA_NAME}' 실행 후 재시작")
+        print(f"[llm] 비활성: {LLM_REASON}")
+        return ""
+    cands = [c for c in LLM_MODEL_CHOICES if avail(c)]
+    if not cands:
+        LLM_REASON = ("설치된 번역 모델이 없습니다 — 다음 중 하나를 받으세요: "
+                      + " / ".join(f"ollama pull {c}" for c in LLM_MODEL_CHOICES))
+        print(f"[llm] 비활성: {LLM_REASON}")
+        return ""
+    if len(cands) == 1:
+        print(f"[llm] 모델 자동 선택: {cands[0]}")
+        return cands[0]
+    if sys.stdin.isatty():
+        info = {m.get("name", ""): m for m in tags}
+        print("[llm] 번역 모델 선택 — 16GB GPU면 큰 모델, 8GB GPU면 작은 모델 권장")
+        for i, c in enumerate(cands, 1):
+            mi = info.get(c) or next((v for k, v in info.items()
+                                      if k.split(":")[0] == c.split(":")[0]), {})
+            d = mi.get("details", {}) or {}
+            print(f"  {i}) {c:<14} {str(d.get('parameter_size', '?')):>7}  "
+                  f"{str(d.get('quantization', '?')):<10} {mi.get('size', 0) / 1e9:.1f}GB")
+        try:
+            pick = input(f"선택 [1-{len(cands)}, Enter=1]: ").strip()
+            idx = int(pick) - 1 if pick else 0
+        except (ValueError, EOFError, KeyboardInterrupt):
+            idx = 0
+        name = cands[max(0, min(idx, len(cands) - 1))]
+        print(f"[llm] 선택됨: {name}")
+        return name
+    print("[llm] 비대화형 실행 — GPU VRAM 기준 자동 선택…")
+    vram = _detect_vram_gb()
+    info_map = {m.get("name", ""): m for m in tags}
+
+    def size_of(c):
+        mi = info_map.get(c) or next((v for k, v in info_map.items()
+                                      if k.split(":")[0] == c.split(":")[0]), {})
+        return mi.get("size", 0) / 1e9
+
+    # 규칙: 모델(파일크기×1.6 여유 계수)이 VRAM의 ~70% 이하면 GPU 전용 가능
+    # OCR+시스템이 VRAM 일부를 쓰므로 안전선 70%로 잡음
+    fit = [c for c in cands if size_of(c) * 1.6 <= vram * 0.7] if vram else []
+    name = fit[0] if fit else cands[-1]      # 안 맞으면 가장 작은 모델로 폴백
+    why = (f"GPU {vram:.0f}GB 기준" if vram else "GPU 감지 실패 — 가장 작은 모델")
+    print(f"[llm] 자동 선택: {name} ({why})")
+    return name
+
+
 def _ensure_ollama():
-    """Ollama 기동 → 로컬 GGUF 등록(필요시) → 워밍업. 어떤 실패에도 서버는 계속 됩니다."""
-    global LLM_REASON, OLLAMA_PROC
+    """Ollama 기동 → 모델 선택/등록 → 워밍업. 어떤 실패에도 서버는 계속 됩니다."""
+    global LLM_REASON, OLLAMA_PROC, LLM_OLLAMA_NAME
     try:
         if not _ollama_alive():
             print("[llm] Ollama 기동 중… (ollama serve)")
@@ -340,8 +412,11 @@ def _ensure_ollama():
                 return
         tags = requests.get(f"{_ollama_url()}/api/tags", timeout=5).json().get("models", [])
         have = [m.get("name", "") for m in tags]
+        LLM_OLLAMA_NAME = _choose_model(have, tags)
+        if not LLM_OLLAMA_NAME:
+            return                              # 사유는 _choose_model이 설정
         if ":" in LLM_OLLAMA_NAME:
-            # 공식 모델(qwen3:8b 등) — 로컬 GGUF 등록 건너뛰고 pull 여부만 확인
+            # 공식 모델(qwen3:14b/8b 등) — 로컬 GGUF 등록 건너뛰고 설치 여부만 확인
             if not any(n == LLM_OLLAMA_NAME or n.split(":")[0] == LLM_OLLAMA_NAME.split(":")[0]
                        for n in have):
                 LLM_REASON = (f"모델 '{LLM_OLLAMA_NAME}' 없음 — "
@@ -679,7 +754,11 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="snap2read 서버")
     ap.add_argument("--llm", default="true", choices=["true", "false"],
                     help="LLM 번역 사용 (기본 true — Ollama 자동 기동·로컬 GGUF 등록·워밍업)")
+    ap.add_argument("--model", default="",
+                    help="번역 모델 고정 (예: --model qwen3:8b) — 시작 시 모델 선택 프롬프트 생략")
     args = ap.parse_args()
+    if args.model:
+        LLM_OLLAMA_NAME = args.model
 
     threading.Thread(target=_warmup_paddle, daemon=True).start()
     if args.llm == "true":
