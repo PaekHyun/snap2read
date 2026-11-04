@@ -430,5 +430,10 @@ def _warmup_paddle():
 if __name__ == "__main__":
     import uvicorn
     threading.Thread(target=_warmup_paddle, daemon=True).start()
-    print("snap2read 서버 시작 → http://0.0.0.0:8000  (폰에서는 PC의 IP 사용)")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    # HTTPS (자체서명 인증서) — 모바일 브라우저가 http를 https로 강제 전환하는 경우 대응.
+    # cert.pem/key.pem이 있으면 https://...:8000으로 접속 가능. 없으면 http로 계속 서비스.
+    cert, key = BASE / "cert.pem", BASE / "key.pem"
+    ssl_args = {"ssl_certfile": str(cert), "ssl_keyfile": str(key)} if cert.exists() and key.exists() else None
+    print(f"snap2read 서버 시작 → {'https' if ssl_args else 'http'}://0.0.0.0:8000  (폰에서는 PC의 IP 사용)")
+    uvicorn.run(app, host="0.0.0.0", port=8000, **(ssl_args or {}))
