@@ -70,14 +70,14 @@ pip install paddlepaddle==3.3.1 paddleocr==3.7.0
 ## 폰에서 접속
 
 1. 서버 실행 후 폰을 **같은 WiFi**에 연결
-2. 폰 브라우저에서 `http://<PC IP>:8000` 접속 (PC IP: `ipconfig` → IPv4)
+2. 폰 브라우저에서 `http://<PC IP>:9000` 접속 (PC IP: `ipconfig` → IPv4)
 3. **📷 사진 찍기/선택** → 폰에서는 **카메라 앱이 바로 열립니다** (HTTP여도 카메라 동작 — `getUserMedia` 미사용)
 4. 촬영 → 자동 처리 → **음성 자동 재생**, 원문/번역 표시, `⬇ MP3/WAV 저장` 버튼
 5. iOS: 공유 → **홈 화면에 추가**하면 앱처럼 사용
 
 ### HTTPS (자동)
 
-- 서버에 `cert.pem`/`key.pem`이 있으면 자동으로 **HTTPS**로 뜹니다 (`https://<PC IP>:8000`) — 모바일 브라우저가 http→https 강제 전환 현상 대응.
+- 서버에 `cert.pem`/`key.pem`이 있으면 자동으로 **HTTPS**로 뜹니다 (`https://<PC IP>:9000`) — 모바일 브라우저가 http→https 강제 전환 현상 대응.
 - 자체서명 인증서라 처음 접속 시 "안전하지 않음" 경고가 뜹니다: **고급 → 안전하지 않음으로 이동(계속)** 1회 누르면 정상 사용 (기기별 1회).
 - 인증서 재생성이 필요하면(예: PC IP가 바뀐 경우) `python generate_cert.py` 실행.
 - `cert.pem`/`key.pem`이 없으면 이전처럼 HTTP로 서비스 (둘 다 지원).
@@ -165,7 +165,7 @@ powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1 -Remove
 | `TesseractNotFoundError` | Paddle 경로 실패 후 폴백에서 Tesseract도 없음 | 서버가 Paddle 원인을 함께 출력 — 그 원인부터 해결 |
 | 첫 요청이 느림 (10~20초) | GPU 첫 구동(커널 로딩) | 서버가 시작 시 자동 워밍업 — 완료 후 첫 요청부터 빠름 |
 | `TooManyRequests` | — (번역 기능은 제거됨) | — |
-| 포트 8000 충돌 (`error 10048`) | 이전 서버 프로세스 생존 | 이전 창 `Ctrl+C` 또는 작업 관리자에서 python 종료 |
+| 포트 9000 충돌 (`error 10048`) | 이전 서버 프로세스 생존 | 이전 창 `Ctrl+C` 또는 작업 관리자에서 python 종료 |
 
 ## 구성
 
