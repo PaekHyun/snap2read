@@ -71,6 +71,14 @@ pip install paddlepaddle==3.3.1 paddleocr==3.7.0
 
 1. 서버 실행 후 폰을 **같은 WiFi**에 연결
 2. 폰 브라우저에서 `http://<PC IP>:9000` 접속 (PC IP: `ipconfig` → IPv4)
+3. **방화벽 수동 등록 (권장)** — 다른 기기(폰·태블릿)에서 접속이 안 되면 대부분 방화벽이 원인입니다. PowerShell(관리자)에서 한 번 실행:
+
+```powershell
+New-NetFirewallRule -DisplayName "snap2read 9000" -Direction Inbound -Protocol TCP -LocalPort 9000 -Action Allow -Profile Private
+```
+
+- 기존 8000용 규칙이 있다면 제거: `Remove-NetFirewallRule -DisplayName "snap2read 8000"`
+- 등록 확인: `Get-NetFirewallRule -DisplayName "snap2read 9000"`
 3. **📷 사진 찍기/선택** → 폰에서는 **카메라 앱이 바로 열립니다** (HTTP여도 카메라 동작 — `getUserMedia` 미사용)
 4. 촬영 → 자동 처리 → **음성 자동 재생**, 원문/번역 표시, `⬇ MP3/WAV 저장` 버튼
 5. iOS: 공유 → **홈 화면에 추가**하면 앱처럼 사용
