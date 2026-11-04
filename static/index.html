@@ -114,7 +114,9 @@ $("shot").onchange = async e => {
   if (!f) return;
   $("out").style.display = "block";
   $("err").textContent = ""; $("ts").textContent = ""; $("edit").value = "";
-  $("editbox").style.display = "none"; $("rr").style.display = "none";
+  $("ko").textContent = ""; $("ko").style.display = "none";   // 이전 번역 즉시 제거 (잔존 버그 수정)
+  $("tl").dataset.job = "";                                   // 이전 작업에 연결된 번역 버튼 무력화
+  $("editbox").style.display = "none"; $("rr").style.display = "none"; $("tl").style.display = "none";
   $("au").style.display = "none"; $("dl").style.display = "none"; $("ms").textContent = "";
   $("spin").style.display = "inline-block"; $("st").textContent = "사진 전송 중…";
   $("go").disabled = true;
