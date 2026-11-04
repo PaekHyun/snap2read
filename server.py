@@ -394,17 +394,26 @@ def _release_llm():
 
 def _llm_translate_stream(text: str, lang: str):
     target = LLM_TRANSLATE_TARGET.get(lang, "한국어")
-    prompt = (f"다음 텍스트를 {target}으로 번역하세요. "
+    # Qwen3 계열 추론(thinking) 모드 끄기 — 번역은 즉답이 맞음.
+    # /no_think: 프롬프트 단 스위치 / think:false: Ollama 공식 옵션 (둘 다 적용)
+    prompt = (f"/no_think 다음 텍스트를 {target}으로 번역하세요. "
               f"번역문만 출력하고 설명은 하지 마세요.\n\n{text}")
     req = {"model": LLM_OLLAMA_NAME, "prompt": prompt, "stream": True,
-           "keep_alive": LLM_KEEP_ALIVE, "options": {"temperature": 0.2, "num_ctx": 4096}}
+           "think": False,
+           "keep_alive": LLM_KEEP_ALIVE,
+           "options": {"temperature": 0.2, "num_ctx": 4096}}
     with requests.post(f"{_ollama_url()}/api/generate", json=req,
                        stream=True, timeout=600) as r:
         r.raise_for_status()
         for line in r.iter_lines():
             if not line:
                 continue
-            data = json.loads(line)
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if data.get("thinking"):
+                continue                    # 혹시 남은 사고 토큰은 화면에 안 보이게 폐기
             if data.get("response"):
                 yield data["response"]
             if data.get("done"):
