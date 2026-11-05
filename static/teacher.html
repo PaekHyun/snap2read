@@ -226,9 +226,10 @@ $("rr").onclick = async (e) => {
     if (!r.ok) throw new Error((await r.json()).detail || r.status);
     const j = await r.json();
     $("spin").style.display = "none"; $("st").textContent = "완료";
-    $("au").src = "/api/audio/" + id;
+    const src = "/api/audio/" + id + "?v=" + Date.now();   // 캐시 우회 — 새 음성 확실히 로드
+    $("au").src = src;
     $("au").play().catch(() => {});
-    $("dl").href = "/api/audio/" + id;
+    $("dl").href = src;
     $("dl").download = "snap2read." + (j.audio_ext || "mp3");
   } catch (err) { fail(String(err.message || err)); }
 };
