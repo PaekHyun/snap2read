@@ -5,6 +5,7 @@
 """
 import asyncio
 import json
+import logging
 import os
 import re
 import shutil
@@ -27,6 +28,18 @@ if sys.stdout.encoding and sys.stdout.encoding.lower() != "utf-8":
         sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     except Exception:
         pass
+
+# Windows asyncio ProactorEventLoop의 알려진 노이즈 억제 —
+# 폴링 연결이 끊길 때마다 _call_connection_lost에서 sock.shutdown이
+# WinError 10054를 내는 것은 서버 오류가 아니라 정상 연결 종료의 부산물.
+# 이 특정 예외만 필터링해 로그를 깨끗하게 유지 (다른 오류는 그대로 표시).
+class _ProactorNoiseFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        msg = record.getMessage()
+        return not ("_call_connection_lost" in msg
+                    and "ConnectionResetError" in msg)
+
+logging.getLogger("asyncio").addFilter(_ProactorNoiseFilter())
 
 BASE = Path(__file__).resolve().parent
 UPLOADS = BASE / "uploads"
