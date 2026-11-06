@@ -12,6 +12,6 @@ GEMINI_API_KEY = ""     # 여기에 Gemini 키 붙여넣기
 GROQ_API_KEY = ""       # 여기에 Groq 키 붙여넣기
 
 GEMINI_MODEL = "gemini-2.5-flash"    # 무료 티어: 약 1,500요청/일
-GROQ_MODEL = "llama-3.1-8b-instant"  # 무료 티어: 14,400요청/일
+GROQ_MODEL = "openai/gpt-oss-120b"   # 무료 티어 (2026-11 기준: llama 계열은 유료 전환됨)
 
 LLM_ENGINE = ""    # "free" | "ollama" | "" (시작 시 선택 프롬프트)
