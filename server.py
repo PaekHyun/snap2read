@@ -599,8 +599,28 @@ def _gemini_stream(text: str, lang: str):
               f"규칙: 아동 도서 번역체로 자연스럽게. 인물을 지칭할 때는 그, 그녀 대신 이름을 "
               f"사용해도 자연스러우면 이름으로. 번역문만 출력하고 설명은 출력하지 마세요.\n\n"
               f"{text}")
-    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-           f"{GEMINI_MODEL}:streamGenerateContent?alt=sse&key={GEMINI_API_KEY}")
+    # 모델 폴백 체인 — 설정 모델이 404(폐기/오타)면 후보를 순서대로 시도
+    gemini_candidates = [GEMINI_MODEL, "gemini-3.1-flash-lite", "gemini-flash-lite-latest"]
+    seen = set()
+    gemini_models = [m for m in gemini_candidates if not (m in seen or seen.add(m))]
+    last_gerr = None
+    for GEMINI_MODEL in gemini_models:
+        url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+               f"{GEMINI_MODEL}:streamGenerateContent?alt=sse&key={GEMINI_API_KEY}")
+        try:
+            yield from _gemini_stream_once(url, prompt)
+            return
+        except requests.exceptions.HTTPError as e:
+            if e.response is not None and e.response.status_code == 404:
+                print(f"[llm] Gemini 모델 '{GEMINI_MODEL}' 없음(404) → 다음 후보 시도")
+                last_gerr = e
+                continue
+            raise
+    raise last_gerr or RuntimeError("Gemini 사용 가능 모델 없음")
+
+
+def _gemini_stream_once(url: str, prompt: str):
+    """Gemini 단일 모델 스트리밍 — 무료 티어 부하(503) 재시도 포함."""
     # 무료 티어는 일시적 부하(503)가 흔함 — 최대 3회 백오프 재시도 후 폴백
     r = None
     for attempt in range(3):
@@ -625,6 +645,7 @@ def _gemini_stream(text: str, lang: str):
             time.sleep(2 * (attempt + 1))
     if r is None:
         raise RuntimeError("Gemini 재시도 실패")
+    with r:
         for line in r.iter_lines():
             if not line:
                 continue
