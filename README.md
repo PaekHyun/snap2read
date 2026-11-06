@@ -96,6 +96,7 @@ New-NetFirewallRule -DisplayName "snap2read 9000" -Direction Inbound -Protocol T
 - 자체서명 인증서라 처음 접속 시 "안전하지 않음" 경고가 뜹니다: **고급 → 안전하지 않음으로 이동(계속)** 1회 누르면 정상 사용 (기기별 1회).
 - 인증서 재생성이 필요하면(예: PC IP가 바뀐 경우) `python generate_cert.py` 실행.
 - `cert.pem`/`key.pem`이 없으면 이전처럼 HTTP로 서비스 (둘 다 지원).
+- **`WARNING: Invalid HTTP request received.` 반복** — 서버가 HTTPS로 뜨고 있는데 폰이 **http**로 접속하려다 실패한 흔적입니다 (폰 브라우저가 http→https 강제 전환 중). 서버 오류가 아니라 무해하며, **폰에서 `https://`로 접속하면 사라집니다**. 반대로 서버가 HTTP인데 폰이 https로 시도하면 "사이트에 연결할 수 없음"이 뜹니다 — 이때는 인증서 생성(`python generate_cert.py`) 후 재시작하세요.
 
 > IP가 자주 바뀌면 공유기에서 PC에 고정 IP 할당을 권장합니다.
 
@@ -221,6 +222,7 @@ powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1 -Remove
 | 첫 요청이 느림 (10~20초) | GPU 첫 구동(커널 로딩) | 서버가 시작 시 자동 워밍업 — 완료 후 첫 요청부터 빠름 |
 | `TooManyRequests` | — (번역 기능은 제거됨) | — |
 | 포트 9000 충돌 (`error 10048`) | 이전 서버 프로세스 생존 | 이전 창 `Ctrl+C` 또는 작업 관리자에서 python 종료 |
+| `WARNING: Invalid HTTP request received.` 반복 | 서버는 HTTPS인데 폰이 http로 접속 시도 (https 강제 전환 실패 흔적) | 무해 — 폰에서 `https://<PC IP>:9000`으로 접속. 서버가 HTTP인데 이 경고가 나오면 반대로 폰이 https로 시도 중 → 인증서 생성(`python generate_cert.py`) 후 재시작 |
 
 ## 구성
 
