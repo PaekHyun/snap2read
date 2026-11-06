@@ -6,8 +6,11 @@ param(
 
 $ErrorActionPreference = "Continue"
 
-# miniforge tf 환경 python 탐색
-$envPy = "$env:USERPROFILE\miniforge3\envs\tf\python.exe"
+# miniforge 환경 python 탐색 — 환경 이름은 'ocr' (tf는 구버전 호환용으로 유지)
+$envPy = "$env:USERPROFILE\miniforge3\envs\ocr\python.exe"
+if (-not (Test-Path $envPy)) { $envPy = "$env:USERPROFILE\miniconda3\envs\ocr\python.exe" }
+if (-not (Test-Path $envPy)) { $envPy = "C:\ProgramData\miniforge3\envs\ocr\python.exe" }
+if (-not (Test-Path $envPy)) { $envPy = "$env:USERPROFILE\miniforge3\envs\tf\python.exe" }
 if (-not (Test-Path $envPy)) { $envPy = "$env:USERPROFILE\miniconda3\envs\tf\python.exe" }
 if (-not (Test-Path $envPy)) { $envPy = "C:\ProgramData\miniforge3\envs\tf\python.exe" }
 if (-not (Test-Path $envPy)) {
