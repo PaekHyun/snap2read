@@ -601,9 +601,30 @@ def _gemini_stream(text: str, lang: str):
               f"{text}")
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
            f"{GEMINI_MODEL}:streamGenerateContent?alt=sse&key={GEMINI_API_KEY}")
-    with requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]},
-                       stream=True, timeout=600) as r:
-        r.raise_for_status()
+    # 무료 티어는 일시적 부하(503)가 흔함 — 최대 3회 백오프 재시도 후 폴백
+    r = None
+    for attempt in range(3):
+        try:
+            r = requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]},
+                              stream=True, timeout=600)
+            if r.status_code in (429, 500, 503):
+                r.close()
+                wait = 2 * (attempt + 1)
+                print(f"[llm] Gemini {r.status_code} — {wait}초 후 재시도 ({attempt + 1}/3)")
+                time.sleep(wait)
+                r = None
+                continue
+            r.raise_for_status()
+            break
+        except requests.exceptions.RequestException:
+            if r is not None:
+                r.close()
+                r = None
+            if attempt == 2:
+                raise
+            time.sleep(2 * (attempt + 1))
+    if r is None:
+        raise RuntimeError("Gemini 재시도 실패")
         for line in r.iter_lines():
             if not line:
                 continue
