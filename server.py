@@ -686,7 +686,12 @@ def _llm_translate_stream(text: str, lang: str):
         last_err = None
         for name, gen in engines:
             try:
-                yield from gen(text, lang)
+                it = iter(gen(text, lang))
+                first = next(it, None)          # 첫 청크를 미리 받아본다 — 여기서 실패하면 폴백 가능
+                if first is None:
+                    raise RuntimeError("응답이 비었습니다")
+                yield first
+                yield from it
                 return
             except Exception as e:
                 last_err = f"{name}: {type(e).__name__}: {e}"

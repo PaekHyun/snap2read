@@ -11,7 +11,7 @@
 GEMINI_API_KEY = ""     # 여기에 Gemini 키 붙여넣기
 GROQ_API_KEY = ""       # 여기에 Groq 키 붙여넣기
 
-GEMINI_MODEL = "gemini-3.8-flash"    # 2026-11 기준 (2.5-flash는 신규 사용자 제공 중단)
+GEMINI_MODEL = "gemini-3.1-flash-lite"    # 2026-11 기준 (3.8-flash는 부하 잦음, 2.5는 신규 중단)
 GROQ_MODEL = "openai/gpt-oss-120b"   # 무료 티어 (2026-11 기준: llama 계열은 유료 전환됨)
 
 LLM_ENGINE = ""    # "free" | "ollama" | "" (시작 시 선택 프롬프트)
