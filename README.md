@@ -3,11 +3,13 @@
 **책 페이지를 사진 찍으면 PC(GPU)가 읽어주는 가정용 AI 리더.**
 Snap. Translate. Read aloud.
 
-폰 웹브라우저 → 사진 업로드 → **PC GPU OCR(PP-OCRv6)** → 원문 표시·**수정 가능** → 자연 음성 **스트리밍 재생** → MP3/WAV 다운로드
+폰 웹브라우저 → 사진 업로드 → **PC GPU OCR(PP-OCRv6)** → 원문 표시·**수정 가능** → 자연 음성 **스트리밍 재생** → **로컬 LLM 한국어 번역** → MP3/WAV 다운로드
 
 - 정확도: PaddleOCR **PP-OCRv6 medium** (50개 언어 단일 인식 모델, 그림 배경 오인식 최소화)
 - 속도: GPU에서 페이지 1장 **0.3~1초** (서버 시작 시 자동 워밍업)
 - **OCR 결과 수정**: 인식된 텍스트를 화면에서 직접 고치고 `🔁 다시 읽기` → 수정된 문장으로 음성 재생성
+- **LLM 번역**: 로컬 Ollama(qwen3:14b/8b)로 오프라인·무제한 한국어 번역 — 사고과정(thinking) 자동 제거
+- **Teacher 모드**: 폰으로 찍으면 태블릿(`/teacher`)에 자동 수신 — 태블릿에서 수정·재생·번역·저장
 - 음성: edge-tts(자연 음성 MP3) → 실패 시 Windows SAPI(오프라인 WAV) 자동 대체
 
 ---
@@ -123,6 +125,33 @@ snap2read/
 
 ---
 
+## LLM 번역 (로컬 Ollama)
+
+번역은 **PC에 설치된 Ollama**가 담당합니다 — 오프라인·무제한·API 키 불필요.
+
+```bash
+# 1) Ollama 설치: https://ollama.com (1회)
+# 2) 번역 모델 받기 (둘 다 받아두면 시작 시 선택 가능)
+ollama pull qwen3:14b     # 16GB GPU 권장 (≈9GB)
+ollama pull qwen3:8b      # 8GB GPU 권장 (≈5GB)
+# 3) (선택) 로컬 GGUF 사용: ./Qwen3.5-9B-GGUF/에 .gguf 넣으면 자동 등록
+```
+
+- `python server.py` → 설치된 모델 목록에서 번호 선택 (16GB→큰 모델 / 8GB→작은 모델 안내)
+- 고정: `python server.py --model qwen3:8b` / 비활성: `--llm false`
+- 자동실행(비대화형) 시 **GPU VRAM을 감지해 자동 선택** (모델 용량 ≤ VRAM 70%)
+- Qwen3 사고과정(thinking)은 서버에서 자동 제거 — 한국어 번역만 스트리밍 표시
+- **Ctrl+C 종료 시** 모델을 VRAM에서 즉시 언로드 + 서버가 기동한 Ollama 정리
+
+## Teacher 모드 (태블릿)
+
+폰으로 찍으면 태블릿에 자동으로 나타나는 교사용 화면:
+
+- 접속: `https://<PC IP>:9000/teacher` (또는 메인 화면 우측 상단 "교사용 화면 →")
+- **폰 업로드 자동 수신** (1.5초 내) — 태블릿에서 읽어주기·수정·번역·MP3 저장 전부 가능
+- 태블릿에서 직접 사진 촬영도 가능
+- 최근 10개 작업 목록에서 다시 열기
+
 ## Windows 부팅 시 자동 실행 / 바로가기 실행
 
 ```powershell
@@ -152,8 +181,13 @@ powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1 -Remove
 1. **OCR**: 로컬 PP-OCRv6 medium (GPU 자동) → 실패 시 기본 경로 → 실패 시 Tesseract 폴백
    - 서버 시작 시 **워밍업**(가짜 이미지 1회 처리)으로 GPU 첫 구동 지연을 사용자 요청과 분리
    - CPU에서는 oneDNN 비활성화(`enable_mkldnn=False`) — PP-OCRv6 호환성
-2. **수정·다시 읽기**: 완료 후 텍스트 박스에서 직접 수정 → `🔁 다시 읽기`로 새 음성 생성
-3. **TTS**: edge-tts(MP3) → 실패 시 Windows SAPI(WAV) 자동 대체
+2. **LLM 번역** (🌐 버튼 누를 때만 — Ollama):
+   - 시작 시 설치된 모델 선택(콘솔) 또는 VRAM 감지 자동 선택(비대화형)
+   - `/api/chat` + `think:false` → 500 시 think 키 제거 재시도
+   - 스트림에서 `<think…</think` 사고 블록 실시간 제거 + `num_predict` 상한(무한 생성 차단)
+   - 스트리밍으로 UI에 실시간 표시
+3. **수정·다시 읽기**: 완료 후 텍스트 박스에서 직접 수정 → `🔁 다시 읽기`로 새 음성 생성 (캐시 우회 URL로 재생)
+4. **TTS**: edge-tts(MP3) → 실패 시 Windows SAPI(WAV) 자동 대체
 
 ## API
 
@@ -161,9 +195,13 @@ powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1 -Remove
 |-----------|------|
 | `POST /api/process` | 사진 업로드 (`image`, `lang`) → `{id}` |
 | `POST /api/reread/{id}` | 수정된 텍스트로 음성 재생성 (`text`) |
+| `POST /api/translate/{id}` | 로컬 LLM 번역 — 스트리밍 응답 (`text`) |
 | `GET /api/status/{id}` | 진행상황/원문/번역/단계별 소요시간 |
 | `GET /api/audio/{id}` | 음성 스트리밍 + 다운로드 |
 | `GET /api/image/{id}` | 업로드된 원본 사진 |
+| `GET /api/latest` | 최신 작업 ID (teacher 자동 수신용) |
+| `GET /api/jobs` | 최근 10개 작업 목록 (teacher 목록용) |
+| `GET /teacher` | 교사용 화면 (태블릿) |
 
 ## 트러블슈팅 (실전에서 확인된 것들)
 
@@ -183,8 +221,11 @@ powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1 -Remove
 
 | 파일 | 역할 |
 |------|------|
-| `server.py` | FastAPI 서버 — OCR → 번역 → TTS → 스트리밍/다운로드 (모델 자동 동기화 포함) |
+| `server.py` | FastAPI 서버 — OCR → LLM 번역 → TTS → 스트리밍/다운로드 (모델 자동 동기화·선택·언로드 포함) |
 | `static/index.html` | 폰용 웹 UI (촬영 → 진행상황 → 자동 재생 → 저장) |
+| `static/teacher.html` | 교사용 화면 (폰 업로드 자동 수신 + 태블릿 촬영 + 편집/번역/저장) |
+| `start_server.bat` | 원클릭 실행기 (miniforge tf 환경 자동 탐색) |
+| `generate_cert.py` | HTTPS 자체서명 인증서 생성 (SAN에 로컬 IP 자동 포함) |
 | `download_page.ipynb` | HuggingFace 모델 4종 이어받기 노트북 (진행바·중단 재개) |
 | `download_models.py` | 모델 다운로더 스크립트판 (`--legacy` v5 / `--all` 언어별) |
 | `register_autostart.ps1` | Windows 로그온 자동실행 등록/제거 |
