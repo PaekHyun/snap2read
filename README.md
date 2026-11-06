@@ -52,7 +52,7 @@ OCR: PaddleOCR 3.7.0 / paddle 3.3.1 (GPU=False)  ← CPU 빌드가 설치된 상
 | GPU | Compute Capability | 설치 명령 |
 |-----|--------------------|-----------|
 | **RTX 50 시리즈** (5090/5080/5070Ti… Blackwell) | sm_120 | `pip install paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/` |
-| **RTX 30/40 시리즈** (3070Ti/3080/4090… Ada·Ampere) | sm_86/89 | `pip install paddlepaddle-gpu==3.0.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/` |
+| **RTX 30/40 시리즈** (3070Ti/3080/4090… Ada·Ampere) | sm_86/89 | `pip install paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/` |
 
 - Paddle 3.x 휠은 **CUDA 런타임·cuDNN을 자체 포함** — 시스템 CUDA Toolkit/cuDNN 설치는 불필요 (직접 컴파일할 때만 필요).
 - RTX 50 시리즈에 cu126/cu118 빌드를 쓰면 **커널이 아예 로드되지 않습니다** (`compute capability 120 not supported` 경고). 반드시 cu129.

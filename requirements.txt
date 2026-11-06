@@ -4,3 +4,8 @@ edge-tts
 pytesseract
 pillow
 pywin32
+# PaddlePaddle/PaddleOCR는 README의 GPU/CPU 설치 안내로 별도 설치하세요
+# (GPU: paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu126/ — 30/40 시리즈)
+# (GPU: paddlepaddle-gpu==3.2.1 -i https://www.paddlepaddle.org.cn/packages/stable/cu129/ — 50 시리즈)
+# (CPU: paddlepaddle==3.3.1)
+# 이후: pip install paddleocr==3.7.0
