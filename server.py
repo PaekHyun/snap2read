@@ -458,6 +458,16 @@ def _ensure_ollama():
         LLM_OLLAMA_NAME = _choose_model(have, tags)
         if not LLM_OLLAMA_NAME:
             return                              # 사유는 _choose_model이 설정
+        if LLM_OLLAMA_NAME == "free":
+            if not (GEMINI_API_KEY or GROQ_API_KEY):
+                LLM_REASON = "Free API 선택됐지만 API 키가 없습니다 — config.py에 GEMINI_API_KEY 또는 GROQ_API_KEY를 넣으세요"
+                print(f"[llm] 비활성: {LLM_REASON}")
+                return
+            LLM_READY.set()
+            LLM_REASON = ""
+            keys = " + ".join(n for n, k in (("Gemini", GEMINI_API_KEY), ("Groq", GROQ_API_KEY)) if k)
+            print(f"[llm] 준비 완료 → Free API 번역 사용 가능 ({keys})")
+            return
         if ":" in LLM_OLLAMA_NAME:
             # 공식 모델(qwen3:14b/8b 등) — 로컬 GGUF 등록 건너뛰고 설치 여부만 확인
             if not any(n == LLM_OLLAMA_NAME or n.split(":")[0] == LLM_OLLAMA_NAME.split(":")[0]
