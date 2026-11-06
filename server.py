@@ -26,9 +26,18 @@ UPLOADS.mkdir(exist_ok=True)
 
 PORT = 9000                                 # 서버 포트 (방화벽 허용 필요)
 # ===== LLM 번역 설정 — 바꿀 값은 이 블록에서만 수정하세요 =====
+# API 키·무료 API 모델은 config.py에서 관리 (GitHub에 커밋되지 않음)
+try:
+    from config import GEMINI_API_KEY, GROQ_API_KEY, GEMINI_MODEL, GROQ_MODEL, LLM_ENGINE
+except ImportError:
+    GEMINI_API_KEY = GROQ_API_KEY = ""
+    GEMINI_MODEL = "gemini-2.5-flash"
+    GROQ_MODEL = "llama-3.1-8b-instant"
+    LLM_ENGINE = ""
+    print("[config] config.py 없음 — API 키는 config.py에 넣으세요 (README 참고)")
 LLM_MODEL_DIR = BASE / "Qwen3.5-9B-GGUF"   # 로컬 GGUF 폴더 (상대경로 ./Qwen3.5-9B-GGUF)
 LLM_MODEL_FILE = ""                        # 비우면 폴더의 .gguf 중 가장 큰 파일 자동 선택
-LLM_MODEL_CHOICES = ["qwen3:14b", "qwen3:8b"]  # 시작 시 이 중 설치된 모델을 선택 (16GB → 큰 모델 / 8GB → 작은 모델)
+LLM_MODEL_CHOICES = ["free", "qwen3:14b", "qwen3:8b"]  # 1)Free API(Gemini→Groq) 2)14b 3)8b
 LLM_OLLAMA_NAME = ""                       # 비우면 시작 시 위 목록에서 선택 (고정하려면 이름 기입 또는 --model 옵션)
                                            # 예: "qwen3:14b" / "qwen3:8b" / "snap2read-llm"(로컬 GGUF)
 LLM_OLLAMA_PORT = 11434                    # Ollama 포트
@@ -335,14 +344,25 @@ def _detect_vram_gb():
 
 
 def _choose_model(have, tags):
-    """LLM_MODEL_CHOICES 중 설치된 모델 선택 — 콘솔이면 번호로 고르고, 아니면 첫 번째.
+    """LLM_MODEL_CHOICES 중 선택 — 콘솔이면 번호로 고르고, 아니면 첫 번째.
+    "free"는 API 키가 있으면 선택 가능 (Gemini→Groq 자동 폴백).
     반환: 모델 이름 / 실패 시 "" (사유는 LLM_REASON에 설정)"""
     global LLM_REASON
 
     def avail(name):
         return any(n == name or n.split(":")[0] == name.split(":")[0] for n in have)
 
+    # "free" 옵션: API 키가 하나라도 있으면 유효
+    free_ok = bool(GEMINI_API_KEY or GROQ_API_KEY)
+
     if LLM_OLLAMA_NAME:                       # --model 옵션 등으로 고정된 경우
+        if LLM_OLLAMA_NAME == "free":
+            if free_ok:
+                print("[llm] 고정 엔진: Free API (Gemini→Groq)")
+                return "free"
+            LLM_REASON = "Free API 선택됐지만 API 키가 없습니다 — config.py에 GEMINI_API_KEY 또는 GROQ_API_KEY를 넣으세요"
+            print(f"[llm] 비활성: {LLM_REASON}")
+            return ""
         if avail(LLM_OLLAMA_NAME):
             print(f"[llm] 고정 모델 사용: {LLM_OLLAMA_NAME}")
             return LLM_OLLAMA_NAME
@@ -350,7 +370,8 @@ def _choose_model(have, tags):
                       f"'ollama pull {LLM_OLLAMA_NAME}' 실행 후 재시작")
         print(f"[llm] 비활성: {LLM_REASON}")
         return ""
-    cands = [c for c in LLM_MODEL_CHOICES if avail(c)]
+    # 선택 목록 구성: free는 키가 있을 때만 포함
+    cands = [c for c in LLM_MODEL_CHOICES if (c == "free" and free_ok) or (c != "free" and avail(c))]
     if not cands:
         LLM_REASON = ("설치된 번역 모델이 없습니다 — 다음 중 하나를 받으세요: "
                       + " / ".join(f"ollama pull {c}" for c in LLM_MODEL_CHOICES))
@@ -361,8 +382,12 @@ def _choose_model(have, tags):
         return cands[0]
     if sys.stdin.isatty():
         info = {m.get("name", ""): m for m in tags}
-        print("[llm] 번역 모델 선택 — 16GB GPU면 큰 모델, 8GB GPU면 작은 모델 권장")
+        print("[llm] 번역 엔진 선택 — Free API는 무료(일 1,500건), 16GB GPU면 큰 모델, 8GB GPU면 작은 모델 권장")
         for i, c in enumerate(cands, 1):
+            if c == "free":
+                srcs = " + ".join(n for n, k in (("Gemini", GEMINI_API_KEY), ("Groq", GROQ_API_KEY)) if k)
+                print(f"  {i}) {c:<14} Free API ({srcs}) — 로컬 GPU 불필요")
+                continue
             mi = info.get(c) or next((v for k, v in info.items()
                                       if k.split(":")[0] == c.split(":")[0]), {})
             d = mi.get("details", {}) or {}
@@ -376,7 +401,11 @@ def _choose_model(have, tags):
         name = cands[max(0, min(idx, len(cands) - 1))]
         print(f"[llm] 선택됨: {name}")
         return name
-    print("[llm] 비대화형 실행 — GPU VRAM 기준 자동 선택…")
+    print("[llm] 비대화형 실행 — 자동 선택…")
+    # free 옵션이 목록에 있으면 우선 (API 키가 있다는 뜻 — 로컬 GPU 부담 없음)
+    if "free" in cands:
+        print("[llm] 자동 선택: free (Free API — Gemini→Groq)")
+        return "free"
     vram = _detect_vram_gb()
     info_map = {m.get("name", ""): m for m in tags}
 
@@ -395,9 +424,22 @@ def _choose_model(have, tags):
 
 
 def _ensure_ollama():
-    """Ollama 기동 → 모델 선택/등록 → 워밍업. 어떤 실패에도 서버는 계속 됩니다."""
+    """LLM 엔진 준비 — free(API)면 Ollama 불필요, ollama면 기동·선택·워밍업.
+    어떤 실패에도 서버는 계속 됩니다."""
     global LLM_REASON, OLLAMA_PROC, LLM_OLLAMA_NAME
     try:
+        if LLM_ENGINE == "free":
+            LLM_OLLAMA_NAME = "free"     # config에서 고정
+        if LLM_OLLAMA_NAME == "free":
+            if not (GEMINI_API_KEY or GROQ_API_KEY):
+                LLM_REASON = "Free API 선택됐지만 API 키가 없습니다 — config.py에 GEMINI_API_KEY 또는 GROQ_API_KEY를 넣으세요"
+                print(f"[llm] 비활성: {LLM_REASON}")
+                return
+            LLM_READY.set()
+            LLM_REASON = ""
+            keys = " + ".join(n for n, k in (("Gemini", GEMINI_API_KEY), ("Groq", GROQ_API_KEY)) if k)
+            print(f"[llm] 준비 완료 → Free API 번역 사용 가능 ({keys})")
+            return
         if not _ollama_alive():
             print("[llm] Ollama 기동 중… (ollama serve)")
             OLLAMA_PROC = subprocess.Popen(
@@ -532,7 +574,86 @@ def _strip_think_stream(chunks):
         yield "(번역 실패: 모델이 사고 모드로만 응답했습니다 — 서버 로그를 확인하세요)"
 
 
+def _gemini_stream(text: str, lang: str):
+    """Gemini API 무료 티어 스트리밍 (SSE). 실패 시 Groq로 폴백은 호출부에서 처리."""
+    target = LLM_TRANSLATE_TARGET.get(lang, "한국어")
+    prompt = (f"다음 텍스트를 {target}로 번역하세요. "
+              f"규칙: 아동 도서 번역체로 자연스럽게. 인물을 지칭할 때는 그, 그녀 대신 이름을 "
+              f"사용해도 자연스러우면 이름으로. 번역문만 출력하고 설명은 출력하지 마세요.\n\n"
+              f"{text}")
+    url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
+           f"{GEMINI_MODEL}:streamGenerateContent?alt=sse&key={GEMINI_API_KEY}")
+    with requests.post(url, json={"contents": [{"parts": [{"text": prompt}]}]},
+                       stream=True, timeout=600) as r:
+        r.raise_for_status()
+        for line in r.iter_lines():
+            if not line:
+                continue
+            line = line.decode("utf-8", "replace")
+            if not line.startswith("data:"):
+                continue
+            try:
+                data = json.loads(line[5:].strip())
+            except json.JSONDecodeError:
+                continue
+            for cand in data.get("candidates", []):
+                for part in (cand.get("content", {}) or {}).get("parts", []):
+                    t = part.get("text")
+                    if t:
+                        yield t
+
+
+def _groq_stream(text: str, lang: str):
+    """Groq API 무료 티어 스트리밍 (OpenAI 호환 SSE)."""
+    target = LLM_TRANSLATE_TARGET.get(lang, "한국어")
+    prompt = (f"다음 텍스트를 {target}로 번역하세요. "
+              f"규칙: 아동 도서 번역체로 자연스럽게. 인물을 지칭할 때는 그, 그녀 대신 이름을 "
+              f"사용해도 자연스러우면 이름으로. 번역문만 출력하고 설명은 출력하지 마세요.\n\n"
+              f"{text}")
+    with requests.post("https://api.groq.com/openai/v1/chat/completions",
+                       headers={"Authorization": f"Bearer {GROQ_API_KEY}"},
+                       json={"model": GROQ_MODEL,
+                             "messages": [{"role": "user", "content": prompt}],
+                             "stream": True, "temperature": 0.2},
+                       stream=True, timeout=600) as r:
+        r.raise_for_status()
+        for line in r.iter_lines():
+            if not line:
+                continue
+            line = line.decode("utf-8", "replace")
+            if not line.startswith("data:"):
+                continue
+            payload = line[5:].strip()
+            if payload == "[DONE]":
+                break
+            try:
+                data = json.loads(payload)
+            except json.JSONDecodeError:
+                continue
+            delta = (data.get("choices", [{}])[0].get("delta", {}) or {})
+            t = delta.get("content")
+            if t:
+                yield t
+
+
 def _llm_translate_stream(text: str, lang: str):
+    """엔진 분기: free(Gemini→Groq 폴백) 또는 Ollama. 모두 스트리밍."""
+    if LLM_OLLAMA_NAME == "free":
+        engines = []
+        if GEMINI_API_KEY:
+            engines.append(("Gemini", _gemini_stream))
+        if GROQ_API_KEY:
+            engines.append(("Groq", _groq_stream))
+        last_err = None
+        for name, gen in engines:
+            try:
+                yield from gen(text, lang)
+                return
+            except Exception as e:
+                last_err = f"{name}: {type(e).__name__}: {e}"
+                print(f"[llm] {name} 실패 → 다음 엔진: {last_err}")
+        raise RuntimeError(f"Free API 호출 실패 — {last_err or 'API 키가 없습니다 (config.py 확인)'}")
+
     target = LLM_TRANSLATE_TARGET.get(lang, "한국어")
     # /no_think: Qwen 계열 프롬프트 스위치 / 마지막 "{target} 번역:" 큐로 출력 언어 고정.
     # 그래도 사고가 본문에 섞여 나오면 _strip_think_stream가 걷어내고,
@@ -780,10 +901,12 @@ if __name__ == "__main__":
     ap.add_argument("--llm", default="true", choices=["true", "false"],
                     help="LLM 번역 사용 (기본 true — Ollama 자동 기동·로컬 GGUF 등록·워밍업)")
     ap.add_argument("--model", default="",
-                    help="번역 모델 고정 (예: --model qwen3:8b) — 시작 시 모델 선택 프롬프트 생략")
+                    help="번역 엔진 고정 (free / qwen3:14b / qwen3:8b) — 시작 시 선택 프롬프트 생략")
     args = ap.parse_args()
     if args.model:
         LLM_OLLAMA_NAME = args.model
+    if LLM_ENGINE and not args.model:
+        LLM_OLLAMA_NAME = LLM_ENGINE   # config.py의 LLM_ENGINE 고정값 적용
 
     threading.Thread(target=_warmup_paddle, daemon=True).start()
     if args.llm == "true":

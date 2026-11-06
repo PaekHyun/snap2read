@@ -131,21 +131,34 @@ snap2read/
 
 ---
 
-## LLM 번역 (로컬 Ollama)
+## LLM 번역 (3가지 엔진)
 
-번역은 **PC에 설치된 Ollama**가 담당합니다 — 오프라인·무제한·API 키 불필요.
+번역은 시작 시 선택합니다 — **1) Free API (Gemini→Groq 자동 폴백) 2) qwen3:14b 3) qwen3:8b**.
+
+### Free API (무료, 로컬 GPU 불필요) ⭐추천
+
+1. `config.example.py`를 `config.py`로 복사
+2. [https://aistudio.google.com](https://aistudio.google.com) → "Get API key" → 키를 `GEMINI_API_KEY`에 붙여넣기 (무료, 카드 불필요 — 약 1,500요청/일)
+3. (선택) [https://console.groq.com](https://console.groq.com) → API Key 생성 → `GROQ_API_KEY`에 붙여넣기 (무료, 카드 불필요 — 14,400요청/일)
+4. `python server.py` → 선택 목록에서 `1) free` 선택
+
+- **Gemini 한도 소진 시 Groq로 자동 전환** — 두 엔진 모두 무료
+- 키는 `config.py`에만 저장 (`.gitignore` 등록 — GitHub에 커밋되지 않음)
+- 다른 PC에서는 `config.py`를 직접 복사해야 합니다
+
+### 로컬 Ollama (오프라인, 무제한)
 
 ```bash
 # 1) Ollama 설치: https://ollama.com (1회)
-# 2) 번역 모델 받기 (둘 다 받아두면 시작 시 선택 가능)
+# 2) 번역 모델 받기
 ollama pull qwen3:14b     # 16GB GPU 권장 (≈9GB)
 ollama pull qwen3:8b      # 8GB GPU 권장 (≈5GB)
-# 3) (선택) 로컬 GGUF 사용: ./Qwen3.5-9B-GGUF/에 .gguf 넣으면 자동 등록
+# 3) (선택) 로컬 GGUF: ./Qwen3.5-9B-GGUF/에 .gguf 넣으면 자동 등록
 ```
 
-- `python server.py` → 설치된 모델 목록에서 번호 선택 (16GB→큰 모델 / 8GB→작은 모델 안내)
-- 고정: `python server.py --model qwen3:8b` / 비활성: `--llm false`
-- 자동실행(비대화형) 시 **GPU VRAM을 감지해 자동 선택** (모델 용량 ≤ VRAM 70%)
+- 고정: `python server.py --model qwen3:8b` (또는 `--model free`)
+- config.py의 `LLM_ENGINE = "free"`로 고정도 가능
+- 자동실행(비대화형) 시: free 옵션이 있으면 우선, 없으면 GPU VRAM 기준 자동 선택
 - Qwen3 사고과정(thinking)은 서버에서 자동 제거 — 한국어 번역만 스트리밍 표시
 - **Ctrl+C 종료 시** 모델을 VRAM에서 즉시 언로드 + 서버가 기동한 Ollama 정리
 
