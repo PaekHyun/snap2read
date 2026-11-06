@@ -604,15 +604,15 @@ def _gemini_stream(text: str, lang: str):
     seen = set()
     gemini_models = [m for m in gemini_candidates if not (m in seen or seen.add(m))]
     last_gerr = None
-    for GEMINI_MODEL in gemini_models:
+    for gmodel in gemini_models:
         url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
-               f"{GEMINI_MODEL}:streamGenerateContent?alt=sse&key={GEMINI_API_KEY}")
+               f"{gmodel}:streamGenerateContent?alt=sse&key={GEMINI_API_KEY}")
         try:
             yield from _gemini_stream_once(url, prompt)
             return
         except requests.exceptions.HTTPError as e:
             if e.response is not None and e.response.status_code == 404:
-                print(f"[llm] Gemini 모델 '{GEMINI_MODEL}' 없음(404) → 다음 후보 시도")
+                print(f"[llm] Gemini 모델 '{gmodel}' 없음(404) → 다음 후보 시도")
                 last_gerr = e
                 continue
             raise
