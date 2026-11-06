@@ -17,6 +17,7 @@ Snap. Translate. Read aloud.
 ## 빠른 시작 (GPU 기본)
 
 > 요구: NVIDIA GPU + Windows + **Python 3.9~3.12** (3.13/3.14는 Paddle 미지원 — conda 가상환경 권장)
+> + **Ollama** (번역용 — https://ollama.com 설치, 1회)
 
 ```bash
 # 0) 가상환경 준비 (예: conda)
@@ -36,7 +37,11 @@ pip install paddleocr==3.7.0
 # 4) GPU 인식 확인 — "PaddlePaddle works well on 1 GPU" 필수
 python -c "import paddle; paddle.utils.run_check()"
 
-# 5) OCR 모델 준비 (아래 "모델 파일" 섹션) 후 서버 실행
+# 5) 번역 모델 받기 — Ollama가 설치돼 있어야 합니다 (둘 다 받으면 시작 시 선택)
+ollama pull qwen3:14b     # 16GB GPU 권장 (≈9GB)
+ollama pull qwen3:8b      # 8GB GPU 권장 (≈5GB)
+
+# 6) OCR 모델 준비 (아래 "모델 파일" 섹션) 후 서버 실행
 python server.py
 ```
 
