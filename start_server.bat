@@ -1,5 +1,7 @@
 @echo off
 rem snap2read 서버 실행 — miniforge (tf) 환경에서 python server.py
+rem 모델을 직접 고르려면 이 파일 사용 (시작 시 Ollama 모델 선택 프롬프트 표시)
+rem 고정 실행은 start_server_14b.bat (16GB GPU) / start_server_8b.bat (8GB GPU)
 rem 더블클릭 한 번으로 서버 시작. 창을 닫으면 서버도 종료됩니다.
 
 set "ENV_PY=%USERPROFILE%\miniforge3\envs\tf\python.exe"
