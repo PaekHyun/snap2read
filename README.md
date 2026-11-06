@@ -244,7 +244,8 @@ powershell -ExecutionPolicy Bypass -File .\register_autostart.ps1 -Remove
 | `server.py` | FastAPI 서버 — OCR → LLM 번역 → TTS → 스트리밍/다운로드 (모델 자동 동기화·선택·언로드 포함) |
 | `static/index.html` | 폰용 웹 UI (촬영 → 진행상황 → 자동 재생 → 저장) |
 | `static/teacher.html` | 교사용 화면 (폰 업로드 자동 수신 + 태블릿 촬영 + 편집/번역/저장) |
-| `start_server.bat` | 원클릭 실행기 (miniforge tf 환경 자동 탐색 — 시작 시 Ollama 모델 선택 프롬프트) |
+| `start_server.bat` | 원클릭 실행기 (miniforge tf 환경 자동 탐색 — 시작 시 번역 엔진 선택 프롬프트) |
+| `start_server_free.bat` | 원클릭 실행기 — **Free API 고정** (Gemini→Groq 자동 폴백, config.py에 키 필요) |
 | `start_server_14b.bat` | 원클릭 실행기 — **qwen3:14b 고정** (16GB GPU용, 모델 선택 없음) |
 | `start_server_8b.bat` | 원클릭 실행기 — **qwen3:8b 고정** (8GB GPU용, 모델 선택 없음) |
 | `generate_cert.py` | HTTPS 자체서명 인증서 생성 (SAN에 로컬 IP 자동 포함) |
