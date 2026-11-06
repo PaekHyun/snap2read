@@ -13,3 +13,6 @@ PP-LCNet_*/
 test_*.mp3
 ocr_test.png
 .DS_Store
+
+# 서버 실행 로그
+logs/

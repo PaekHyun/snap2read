@@ -16,6 +16,9 @@ if not exist "%ENV_PY%" (
 )
 
 cd /d "%~dp0"
+if not exist logs mkdir logs
+set "LOGFILE=logs\server_%date:~0,4%-%date:~5,2%-%date:~8,2%.log"
 echo snap2read 서버 시작 — %ENV_PY%
-"%ENV_PY%" server.py
+echo 로그 저장: %LOGFILE%
+powershell -NoProfile -Command "& '%ENV_PY%' server.py 2>&1 | ForEach-Object { $_; Add-Content -Path '%LOGFILE%' -Value $_ }"
 pause
