@@ -169,7 +169,7 @@ function startWatcher() {
       const r = await (await fetch("/api/latest")).json();
       if (r.id && r.id !== curId) openJob(r.id, true);
     } catch (e) { /* 무시 */ }
-  }, 1500);
+  }, 4000);   // 1.5초 → 4초 — 여러 탭 열어두면 요청 폭증 (로그 난사 방지)
 }
 
 // 최근 작업 목록
@@ -274,7 +274,7 @@ document.addEventListener("click", function once() {
 
 startWatcher();
 refreshList();
-setInterval(refreshList, 5000);
+setInterval(refreshList, 15000);   // 5초 → 15초 — 목록은 자주 바뀌지 않음
 </script>
 </body>
 </html>
