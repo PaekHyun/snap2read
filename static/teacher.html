@@ -165,7 +165,7 @@ function openJob(id, autoplay) {
   $("au").style.display = "none"; $("dl").style.display = "none"; $("ms").textContent = "";
   $("thumb").style.display = "none";
   $("ratebox").style.display = "flex";
-  const savedRate = localStorage.getItem("s2r_rate") || "+0%";
+  const savedRate = localStorage.getItem("s2r_rate") || "+15%";
   document.querySelectorAll(".ratebtn").forEach(b =>
     b.classList.toggle("on", b.dataset.rate === savedRate));
   $("spin").style.display = "inline-block"; $("st").textContent = STAGE.queued;
@@ -265,7 +265,7 @@ $("rr").onclick = async (e) => {
   try {
     const fd = new FormData();
     fd.append("text", text);
-    fd.append("rate", localStorage.getItem("s2r_rate") || "+0%");
+    fd.append("rate", localStorage.getItem("s2r_rate") || "+15%");
     const r = await fetch("/api/reread/" + id, { method: "POST", body: fd });
     if (!r.ok) throw new Error((await r.json()).detail || r.status);
     const j = await r.json();

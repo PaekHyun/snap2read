@@ -863,7 +863,7 @@ async def jobs():
 @app.post("/api/process")
 async def process(image: UploadFile = File(...),
                   lang: str = Form("eng"),
-                  rate: str = Form("+0%")):
+                  rate: str = Form("+15%")):
     jid = uuid.uuid4().hex[:12]
     suffix = Path(image.filename or "photo.jpg").suffix or ".jpg"
     img_path = UPLOADS / f"{jid}{suffix}"
@@ -909,7 +909,7 @@ def api_translate(jid: str, text: str = Form(...)):
 
 
 @app.post("/api/reread/{jid}")
-async def reread(jid: str, text: str = Form(...), rate: str = Form("+0%")):
+async def reread(jid: str, text: str = Form(...), rate: str = Form("+15%")):
     """사용자가 수정한 텍스트로 음성을 다시 생성. rate: '+0%','-15%','-30%','-60%'."""
     with _LOCK:
         job = JOBS.get(jid)

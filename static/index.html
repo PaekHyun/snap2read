@@ -136,7 +136,7 @@ $("shot").onchange = async e => {
 
   // 배속 버튼 UI 표시 + 현재 선택 표시
   $("ratebox").style.display = "flex";
-  const savedRate = localStorage.getItem("s2r_rate") || "+0%";
+  const savedRate = localStorage.getItem("s2r_rate") || "+15%";
   document.querySelectorAll(".ratebtn").forEach(b =>
     b.classList.toggle("on", b.dataset.rate === savedRate));
 
@@ -144,7 +144,7 @@ $("shot").onchange = async e => {
     const fd = new FormData();
     fd.append("image", f, "photo.jpg");
     fd.append("lang", $("lang").value);
-    fd.append("rate", localStorage.getItem("s2r_rate") || "+0%");
+    fd.append("rate", localStorage.getItem("s2r_rate") || "+15%");
     const r = await fetch("/api/process", { method: "POST", body: fd });
     if (!r.ok) throw new Error("업로드 실패 (" + r.status + ")");
     const { id } = await r.json();
@@ -260,7 +260,7 @@ $("rr").onclick = async () => {  const id = $("rr").dataset.job;
   try {
     const fd = new FormData();
     fd.append("text", text);
-    fd.append("rate", localStorage.getItem("s2r_rate") || "+0%");
+    fd.append("rate", localStorage.getItem("s2r_rate") || "+15%");
     const r = await fetch("/api/reread/" + id, { method: "POST", body: fd });
     if (!r.ok) throw new Error("다시 읽기 실패 (" + r.status + ")");
     const j = await r.json();
