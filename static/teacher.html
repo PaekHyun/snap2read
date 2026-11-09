@@ -53,6 +53,11 @@
     background: #1e40af; color: #dbeafe; text-decoration: none; font-size: 13.5px;
   }
   audio { width: 100%; margin-top: 10px; display: none; }
+  .ratebox { margin-top: 10px; display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .ratelabel { color: #64748b; font-size: 13px; }
+  .ratebtn { padding: 6px 12px; border-radius: 8px; border: 1px solid #cbd5e1;
+             background: #fff; color: #0f172a; font-weight: 600; cursor: pointer; font-size: 13px; }
+  .ratebtn.on { background: #1e40af; color: #fff; border-color: #1e40af; }
   .thumb { width: 100%; border-radius: 10px; margin-top: 10px; display: none; }
 </style>
 </head>
@@ -92,6 +97,13 @@
     <div class="ko" id="ko" style="display:none"></div>
     <div class="ms" id="ms"></div>
     <audio id="au" controls></audio>
+    <div class="ratebox" id="ratebox" style="display:none">
+      <span class="ratelabel">말하기 속도</span>
+      <button class="ratebtn" data-rate="-60%">더 느림</button>
+      <button class="ratebtn" data-rate="-30%">느림</button>
+      <button class="ratebtn" data-rate="+0%">보통</button>
+      <button class="ratebtn" data-rate="+15%">빠름</button>
+    </div>
     <a class="dl" id="rr" style="display:none" download>🔁 다시 읽기</a>
     <a class="dl" id="tl" style="display:none">🌐 번역</a>
     <a class="dl" id="dl" style="display:none" download>⬇ MP3/WAV 저장</a>
@@ -115,6 +127,33 @@ function fail(msg) {
   $("err").textContent = "⚠️ " + msg;
 }
 
+// 배속 버튼 — 클릭 시 선택 저장 + 현재 음성을 해당 속도로 재생성
+  document.querySelectorAll(".ratebtn").forEach(btn => {
+    btn.onclick = async () => {
+      localStorage.setItem("s2r_rate", btn.dataset.rate);
+      document.querySelectorAll(".ratebtn").forEach(b =>
+        b.classList.toggle("on", b === btn));
+      const id = curId;
+      const text = ($("edit").value.trim() || $("ts").textContent.trim());
+      if (id && text) {
+        $("st").textContent = "속도 변경 중…";
+        const fd = new FormData();
+        fd.append("text", text);
+        fd.append("rate", btn.dataset.rate);
+        try {
+          const r = await fetch("/api/reread/" + id, { method: "POST", body: fd });
+          if (r.ok) {
+            const src = "/api/audio/" + id + "?v=" + Date.now();
+            $("au").src = src; $("au").style.display = "block";
+            $("dl").href = src;
+            $("st").textContent = "완료";
+            $("au").play().catch(() => {});
+          }
+        } catch (e) { /* 무시 */ }
+      }
+    };
+  });
+
 function openJob(id, autoplay) {
   if (!id) return;
   curId = id;
@@ -125,6 +164,10 @@ function openJob(id, autoplay) {
   $("tl").style.display = "none"; $("tl").dataset.job = "";
   $("au").style.display = "none"; $("dl").style.display = "none"; $("ms").textContent = "";
   $("thumb").style.display = "none";
+  $("ratebox").style.display = "flex";
+  const savedRate = localStorage.getItem("s2r_rate") || "+0%";
+  document.querySelectorAll(".ratebtn").forEach(b =>
+    b.classList.toggle("on", b.dataset.rate === savedRate));
   $("spin").style.display = "inline-block"; $("st").textContent = STAGE.queued;
   if (polling) clearInterval(polling);
   polling = setInterval(async () => {
@@ -222,6 +265,7 @@ $("rr").onclick = async (e) => {
   try {
     const fd = new FormData();
     fd.append("text", text);
+    fd.append("rate", localStorage.getItem("s2r_rate") || "+0%");
     const r = await fetch("/api/reread/" + id, { method: "POST", body: fd });
     if (!r.ok) throw new Error((await r.json()).detail || r.status);
     const j = await r.json();

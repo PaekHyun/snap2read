@@ -278,13 +278,13 @@ def _clean_for_tts(text: str) -> str:
     return t[:5000] if t else ""
 
 
-async def tts_edge(text: str, voice: str, path: str, timeout: float = 45) -> bool:
-    """온라인 TTS (edge-tts, MP3 출력). 실패 시 False."""
+async def tts_edge(text: str, voice: str, path: str, timeout: float = 45, rate: str = "+0%") -> bool:
+    """온라인 TTS (edge-tts, MP3 출력). 실패 시 False. rate: '+0%','-30%' 등 — 합성 단계에서 자연스럽게 느려짐."""
     try:
         import edge_tts
 
         async def _run():
-            await edge_tts.Communicate(text, voice).save(path)
+            await edge_tts.Communicate(text, voice, rate=rate).save(path)
 
         await asyncio.wait_for(_run(), timeout=timeout)
         return os.path.getsize(path) > 1000
@@ -296,8 +296,8 @@ async def tts_edge(text: str, voice: str, path: str, timeout: float = 45) -> boo
         return False
 
 
-def tts_sapi(text: str, out_wav: str) -> bool:
-    """오프라인 TTS (Windows SAPI, WAV 출력). 네트워크 없이 동작."""
+def tts_sapi(text: str, out_wav: str, rate: int = 0) -> bool:
+    """오프라인 TTS (Windows SAPI, WAV 출력). 네트워크 없이 동작. rate: -10~+10 (음수가 느림)."""
     try:
         import pythoncom
         import win32com.client
@@ -314,6 +314,10 @@ def tts_sapi(text: str, out_wav: str) -> bool:
             pass
         stream = win32com.client.Dispatch("SAPI.SpFileStream")
         stream.Open(out_wav, 3, False)          # 3 = SSFMCreateForWrite
+        try:
+            voice.Rate = max(-10, min(10, int(rate)))   # 엔진 자체 속도 조절 — 자연스러움
+        except Exception:
+            pass
         prev = voice.AudioOutputStream
         voice.AudioOutputStream = stream
         voice.Speak(text)
@@ -322,6 +326,18 @@ def tts_sapi(text: str, out_wav: str) -> bool:
         return os.path.getsize(out_wav) > 1000
     except Exception:
         return False
+
+
+def _sapi_rate(rate_str: str) -> int:
+    """'+0%','-30%' 같은 edge-tts 표기를 SAPI Rate(-10~+10)로 변환. -30% ≈ -3."""
+    try:
+        m = re.match(r"([+-])?(\d+)%", rate_str.strip())
+        if not m:
+            return 0
+        sign = -1 if m.group(1) == "-" else 1
+        return max(-10, min(10, sign * int(m.group(2)) // 10))
+    except Exception:
+        return 0
 
 
 # ---------------------------------------------------------------- LLM 번역 (Ollama)
@@ -805,11 +821,11 @@ async def _run_job(jid: str, img_path: Path, lang: str):
         t_tts = time.time()
         spoken = _clean_for_tts(text)
         audio = UPLOADS / f"{jid}.mp3"
-        if await tts_edge(spoken, VOICES.get(lang, VOICES["eng"]), str(audio)):
+        if await tts_edge(spoken, VOICES.get(lang, VOICES["eng"]), str(audio), rate=job.get("rate", "+0%")):
             job["audio"], job["audio_ext"] = audio.name, "mp3"
         else:
             wav = UPLOADS / f"{jid}.wav"
-            ok = await loop.run_in_executor(None, tts_sapi, spoken, str(wav))
+            ok = await loop.run_in_executor(None, tts_sapi, spoken, str(wav), _sapi_rate(job.get("rate", "+0%")))
             if not ok:
                 job["status"] = "error"
                 job["error"] = "음성 생성에 실패했습니다. (인터넷 연결 시 edge-tts 사용, 없으면 Windows SAPI 사용)"
@@ -846,7 +862,8 @@ async def jobs():
 
 @app.post("/api/process")
 async def process(image: UploadFile = File(...),
-                  lang: str = Form("eng")):
+                  lang: str = Form("eng"),
+                  rate: str = Form("+0%")):
     jid = uuid.uuid4().hex[:12]
     suffix = Path(image.filename or "photo.jpg").suffix or ".jpg"
     img_path = UPLOADS / f"{jid}{suffix}"
@@ -857,7 +874,7 @@ async def process(image: UploadFile = File(...),
 
     job = {"id": jid, "status": "queued", "text": "", "audio": "",
            "audio_ext": "", "error": "", "ms": 0, "ocr_ms": 0, "tts_ms": 0,
-           "image": img_path.name, "created": time.time()}
+           "image": img_path.name, "created": time.time(), "rate": rate}
     with _LOCK:
         JOBS[jid] = job
     task = asyncio.create_task(_run_job(jid, img_path, lang))
@@ -892,8 +909,8 @@ def api_translate(jid: str, text: str = Form(...)):
 
 
 @app.post("/api/reread/{jid}")
-async def reread(jid: str, text: str = Form(...)):
-    """사용자가 수정한 텍스트로 음성을 다시 생성."""
+async def reread(jid: str, text: str = Form(...), rate: str = Form("+0%")):
+    """사용자가 수정한 텍스트로 음성을 다시 생성. rate: '+0%','-15%','-30%','-60%'."""
     with _LOCK:
         job = JOBS.get(jid)
     if not job:
@@ -901,17 +918,18 @@ async def reread(jid: str, text: str = Form(...)):
     text = text.strip()
     if not text:
         raise HTTPException(400, "빈 텍스트입니다.")
+    job["rate"] = rate
     job["status"] = "tts"
     spoken = _clean_for_tts(text)
     stamp = int(time.time() * 1000)
     audio = UPLOADS / f"{jid}_r{stamp}.mp3"
     if await tts_edge(spoken, VOICES.get(job.get("lang", "eng"), VOICES["eng"]),
-                      str(audio)):
+                      str(audio), rate=rate):
         job["audio"], job["audio_ext"] = audio.name, "mp3"
     else:
         wav = UPLOADS / f"{jid}_r{stamp}.wav"
         ok = await asyncio.get_running_loop().run_in_executor(
-            None, tts_sapi, spoken, str(wav))
+            None, tts_sapi, spoken, str(wav), _sapi_rate(rate))
         if not ok:
             job["status"] = "error"
             job["error"] = "음성 생성에 실패했습니다."
