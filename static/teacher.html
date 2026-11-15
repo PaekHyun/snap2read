@@ -197,7 +197,10 @@ function openJob(id, autoplay) {
       }
       $("thumb").src = "/api/image/" + id;
       $("thumb").style.display = "block";
-      if (autoplay && $("auto").checked) au.play().catch(() => {});
+      if (autoplay && $("auto").checked) {
+        doTranslate();          // 자동읽기: 번역 먼저 시작 (스트리밍)
+        au.play().catch(() => {});   // 원문 읽어주기는 그대로 — 번역과 병렬
+      }
       refreshList();
     } catch (e) { /* 폴링 오류 무시 — 다음 틱에서 재시도 */ }
   }, 700);
@@ -279,8 +282,8 @@ $("rr").onclick = async (e) => {
 };
 
 // LLM 번역 — 스트리밍으로 번역 칸에 실시간 표시 (수정된 텍스트 기준)
-$("tl").onclick = async (e) => {
-  e.preventDefault();
+// LLM 번역 — 스트리밍으로 번역 칸에 실시간 표시 (수정된 텍스트 기준)
+async function doTranslate() {
   const id = $("tl").dataset.job;
   const text = ($("edit").value || $("ts").textContent).trim();
   if (!id || !text) return;
@@ -304,7 +307,8 @@ $("tl").onclick = async (e) => {
   } catch (err) {
     ko.textContent = "⚠️ 번역 실패: " + (err.message || err);
   }
-};
+}
+$("tl").onclick = (e) => { e.preventDefault(); doTranslate(); };
 
 // 언어 선택 — 폰과 공유되는 서버 기본값은 없으므로 로컬 저장만
 $("lang").value = localStorage.getItem("s2r_lang") || "eng";

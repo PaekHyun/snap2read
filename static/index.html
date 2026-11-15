@@ -186,13 +186,16 @@ function poll(id) {
         (((j.tts_ms || 0) / 1000) || "?") + "s)" +
         " · 목소리 " + (LANG_NAME[$("lang").value] || $("lang").value) +
         " · " + (j.audio_ext === "wav" ? "PC 오프라인 음성(SAPI)" : "자연 음성(edge-tts)");
-      if ($("auto").checked) au.play().catch(() => {});
+      if ($("auto").checked) {
+        doTranslate();          // 자동읽기: 번역 먼저 시작 (스트리밍)
+        au.play().catch(() => {});   // 원문 읽어주기는 그대로 — 번역과 병렬
+      }
     } catch (e) { /* 네트워크 순간 끊김 — 다음 폴링에서 재시도 */ }
   }, 700);
 }
 
 // LLM 번역 — 스트리밍으로 번역 칸에 실시간 표시 (수정된 텍스트 기준)
-$("tl").onclick = async () => {
+async function doTranslate() {
   const id = $("tl").dataset.job;
   const text = ($("edit").value || $("ts").textContent).trim();
   if (!id || !text) return;
@@ -220,7 +223,8 @@ $("tl").onclick = async () => {
   } finally {
     $("tl").style.opacity = "";
   }
-};
+}
+$("tl").onclick = doTranslate;
 
 // 수정된 텍스트로 다시 읽어주기
 // 배속 버튼 — 클릭 시 선택 저장 + 현재 음성을 해당 속도로 재생성
